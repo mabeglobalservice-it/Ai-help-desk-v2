@@ -11,14 +11,15 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  displayName  String   @map("display_name")
+  id           String      @id @default(uuid())
+  email        String      @unique
+  displayName  String      @map("display_name")
   role         Role
-  entraId      String?  @unique @map("entra_id")
-  departmentId String?  @map("department_id")
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
+  entraId      String?     @unique @map("entra_id")
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+  isActive     Boolean     @default(true) @map("is_active")
+  createdAt    DateTime    @default(now()) @map("created_at")
 
   ticketsAsEmployee   Ticket[] @relation("EmployeeTickets")
   ticketsAsTechnician Ticket[] @relation("TechnicianTickets")
@@ -33,22 +34,34 @@ enum Role {
   ADMIN
 }
 
+model Department {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users User[]
+
+  @@map("departments")
+}
+
 model Ticket {
-  id           String       @id @default(uuid())
-  reference    String       @unique
-  employeeId   String       @map("employee_id")
-  employee     User         @relation("EmployeeTickets", fields: [employeeId], references: [id])
-  technicianId String?      @map("technician_id")
-  technician   User?        @relation("TechnicianTickets", fields: [technicianId], references: [id])
-  categoryId   String       @map("category_id")
-  priorityId   String       @map("priority_id")
-  ciId         String?      @map("ci_id")
+  id           String         @id @default(uuid())
+  reference    String         @unique
+  employeeId   String         @map("employee_id")
+  employee     User           @relation("EmployeeTickets", fields: [employeeId], references: [id])
+  technicianId String?        @map("technician_id")
+  technician   User?          @relation("TechnicianTickets", fields: [technicianId], references: [id])
+  categoryId   String         @map("category_id")
+  category     TicketCategory @relation(fields: [categoryId], references: [id])
+  priorityId   String         @map("priority_id")
+  priority     Priority       @relation(fields: [priorityId], references: [id])
+  ciId         String?        @map("ci_id")
   title        String
   summary      String?
-  status       TicketStatus @default(NEW)
-  slaDueAt     DateTime?    @map("sla_due_at")
-  createdAt    DateTime     @default(now()) @map("created_at")
-  resolvedAt   DateTime?    @map("resolved_at")
+  status       TicketStatus   @default(NEW)
+  slaDueAt     DateTime?      @map("sla_due_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  resolvedAt   DateTime?      @map("resolved_at")
 
   statusHistory TicketStatusHistory[]
 
@@ -61,6 +74,27 @@ enum TicketStatus {
   IN_PROGRESS
   RESOLVED
   ESCALATED
+}
+
+model TicketCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tickets Ticket[]
+
+  @@map("ticket_categories")
+}
+
+model Priority {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  level     Int      @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tickets Ticket[]
+
+  @@map("priorities")
 }
 
 model TicketStatusHistory {
