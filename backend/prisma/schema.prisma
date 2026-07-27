@@ -18,6 +18,8 @@ model User {
   entraId      String?     @unique @map("entra_id")
   departmentId String?     @map("department_id")
   department   Department? @relation(fields: [departmentId], references: [id])
+  teamId       String?     @map("team_id")
+  team         Team?       @relation(fields: [teamId], references: [id])
   isActive     Boolean     @default(true) @map("is_active")
   createdAt    DateTime    @default(now()) @map("created_at")
 
@@ -42,6 +44,29 @@ model Department {
   users User[]
 
   @@map("departments")
+}
+
+model Team {
+  id         String          @id @default(uuid())
+  name       String          @unique
+  categoryId String?         @map("category_id")
+  category   TicketCategory? @relation(fields: [categoryId], references: [id])
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  members User[]
+
+  @@map("teams")
+}
+
+model Location {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  address   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  configurationItems ConfigurationItem[]
+
+  @@map("locations")
 }
 
 model Ticket {
@@ -82,6 +107,7 @@ model TicketCategory {
   createdAt DateTime @default(now()) @map("created_at")
 
   tickets Ticket[]
+  teams   Team[]
 
   @@map("ticket_categories")
 }
@@ -115,6 +141,8 @@ model ConfigurationItem {
   name            String
   inventoryNumber String      @unique @map("inventory_number")
   serialNumber    String?     @map("serial_number")
+  locationId      String?     @map("location_id")
+  location        Location?   @relation(fields: [locationId], references: [id])
   criticality     Criticality @default(MEDIUM)
   status          CiStatus    @default(ACTIVE)
 
