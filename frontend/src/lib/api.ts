@@ -138,3 +138,21 @@ export function createTicket(token: string, input: CreateTicketInput): Promise<T
     body: JSON.stringify(input),
   });
 }
+
+export interface TicketComment {
+  id: string;
+  content: string;
+  createdAt: string;
+  author: { id: string; displayName: string; email: string; role: Role };
+}
+
+export function getComments(token: string, ticketId: string): Promise<TicketComment[]> {
+  return apiFetch<TicketComment[]>(`/tickets/${ticketId}/comments`, token);
+}
+
+export function createComment(token: string, ticketId: string, content: string): Promise<TicketComment> {
+  return apiFetch<TicketComment>(`/tickets/${ticketId}/comments`, token, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
