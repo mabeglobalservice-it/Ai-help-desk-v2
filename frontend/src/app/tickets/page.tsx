@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ApiError, getTickets, type Ticket, type TicketStatus } from "@/lib/api";
+import { ApiError, getTickets, type Ticket } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,19 +18,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-
-const STATUS_DISPLAY: Record<TicketStatus, { label: string; dot: string }> = {
-  NEW: { label: "Nouveau", dot: "bg-signal-slate" },
-  IN_PROGRESS: { label: "En cours", dot: "bg-signal-amber" },
-  RESOLVED: { label: "Résolu", dot: "bg-signal-moss" },
-  ESCALATED: { label: "Escaladé", dot: "bg-signal-rust" },
-};
-
-function priorityDotClass(level: number) {
-  if (level >= 3) return "bg-signal-rust";
-  if (level === 2) return "bg-signal-amber";
-  return "bg-signal-slate";
-}
 
 const dateFormatter = new Intl.DateTimeFormat("fr-CA", {
   dateStyle: "medium",
@@ -106,7 +94,20 @@ export default function TicketsPage() {
               </TableHeader>
               <TableBody>
                 {tickets.map((ticket) => (
-                  <TableRow key={ticket.id}>
+                  <TableRow
+                    key={ticket.id}
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Voir le ticket ${ticket.reference}`}
+                    className="cursor-pointer transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+                    onClick={() => router.push(`/tickets/${ticket.id}`)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        router.push(`/tickets/${ticket.id}`);
+                      }
+                    }}
+                  >
                     <TableCell className="font-mono text-xs">{ticket.reference}</TableCell>
                     <TableCell className="max-w-64 truncate font-medium">{ticket.title}</TableCell>
                     <TableCell className="text-muted-foreground">{ticket.category.name}</TableCell>

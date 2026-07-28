@@ -89,6 +89,22 @@ export function getTickets(token: string): Promise<Ticket[]> {
   return apiFetch<Ticket[]>("/tickets", token);
 }
 
+export interface TicketStatusHistoryEntry {
+  id: string;
+  fromStatus: TicketStatus | null;
+  toStatus: TicketStatus;
+  changedBy: string;
+  changedAt: string;
+}
+
+export interface TicketDetail extends Ticket {
+  statusHistory: TicketStatusHistoryEntry[];
+}
+
+export function getTicket(token: string, id: string): Promise<TicketDetail> {
+  return apiFetch<TicketDetail>(`/tickets/${id}`, token);
+}
+
 export interface TicketCategory {
   id: string;
   name: string;
