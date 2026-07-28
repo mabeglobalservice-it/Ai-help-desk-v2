@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ApiError, getTickets, type Ticket, type TicketStatus } from "@/lib/api";
-import { clearSession, getSessionUser, getToken } from "@/lib/session";
+import { clearSession, getToken } from "@/lib/session";
+import { useSessionUser } from "@/lib/use-session-user";
+import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -37,7 +40,7 @@ export default function TicketsPage() {
   const router = useRouter();
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const user = getSessionUser();
+  const user = useSessionUser();
 
   useEffect(() => {
     const token = getToken();
@@ -58,31 +61,18 @@ export default function TicketsPage() {
       });
   }, [router]);
 
-  function handleSignOut() {
-    clearSession();
-    router.replace("/login");
-  }
-
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <div>
-            <p className="font-mono text-xs tracking-[0.25em] text-muted-foreground">SYSTÈME</p>
-            <h1 className="text-lg font-semibold tracking-tight">Tickets</h1>
-          </div>
-          <div className="flex items-center gap-4">
-            {user ? (
-              <span className="text-sm text-muted-foreground">
-                {user.displayName} · <span className="font-mono text-xs">{user.role}</span>
-              </span>
-            ) : null}
-            <Button variant="outline" size="sm" onClick={handleSignOut}>
-              Se déconnecter
+      <AppHeader
+        title="Tickets"
+        action={
+          user?.role === "EMPLOYEE" ? (
+            <Button size="sm" nativeButton={false} render={<Link href="/tickets/new" />}>
+              Nouveau ticket
             </Button>
-          </div>
-        </div>
-      </header>
+          ) : undefined
+        }
+      />
 
       <main className="mx-auto max-w-5xl px-6 py-8">
         {error ? (
@@ -95,7 +85,9 @@ export default function TicketsPage() {
           <div className="rounded-md border border-dashed border-border py-16 text-center">
             <p className="font-medium">Aucun ticket pour le moment.</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Les nouveaux tickets créés apparaîtront ici.
+              {user?.role === "EMPLOYEE"
+                ? "Créez votre premier ticket pour démarrer."
+                : "Les nouveaux tickets créés apparaîtront ici."}
             </p>
           </div>
         ) : (

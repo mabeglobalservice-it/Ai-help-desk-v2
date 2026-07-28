@@ -20,6 +20,27 @@ async function parseErrorMessage(response: Response): Promise<string> {
   return "Une erreur est survenue.";
 }
 
+async function apiFetch<T>(
+  path: string,
+  token: string,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorMessage(response));
+  }
+
+  return response.json();
+}
+
 export type Role = "EMPLOYEE" | "TECHNICIAN" | "SUPERVISOR" | "ADMIN";
 
 export interface SessionUser {
@@ -64,14 +85,40 @@ export interface Ticket {
   priority: { id: string; name: string; level: number };
 }
 
-export async function getTickets(token: string): Promise<Ticket[]> {
-  const response = await fetch(`${API_URL}/tickets`, {
-    headers: { Authorization: `Bearer ${token}` },
+export function getTickets(token: string): Promise<Ticket[]> {
+  return apiFetch<Ticket[]>("/tickets", token);
+}
+
+export interface TicketCategory {
+  id: string;
+  name: string;
+}
+
+export function getTicketCategories(token: string): Promise<TicketCategory[]> {
+  return apiFetch<TicketCategory[]>("/ticket-categories", token);
+}
+
+export interface Priority {
+  id: string;
+  name: string;
+  level: number;
+}
+
+export function getPriorities(token: string): Promise<Priority[]> {
+  return apiFetch<Priority[]>("/priorities", token);
+}
+
+export interface CreateTicketInput {
+  employeeId: string;
+  categoryId: string;
+  priorityId: string;
+  title: string;
+  summary?: string;
+}
+
+export function createTicket(token: string, input: CreateTicketInput): Promise<Ticket> {
+  return apiFetch<Ticket>("/tickets", token, {
+    method: "POST",
+    body: JSON.stringify(input),
   });
-
-  if (!response.ok) {
-    throw new ApiError(response.status, await parseErrorMessage(response));
-  }
-
-  return response.json();
 }

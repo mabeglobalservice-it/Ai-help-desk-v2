@@ -1,0 +1,44 @@
+"use client";
+
+import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { clearSession } from "@/lib/session";
+import { useSessionUser } from "@/lib/use-session-user";
+import { Button } from "@/components/ui/button";
+
+interface AppHeaderProps {
+  title: string;
+  action?: ReactNode;
+}
+
+export function AppHeader({ title, action }: AppHeaderProps) {
+  const router = useRouter();
+  const user = useSessionUser();
+
+  function handleSignOut() {
+    clearSession();
+    router.replace("/login");
+  }
+
+  return (
+    <header className="border-b border-border">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+        <div>
+          <p className="font-mono text-xs tracking-[0.25em] text-muted-foreground">SYSTÈME</p>
+          <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
+        </div>
+        <div className="flex items-center gap-4">
+          {action}
+          {user ? (
+            <span className="text-sm text-muted-foreground">
+              {user.displayName} · <span className="font-mono text-xs">{user.role}</span>
+            </span>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={handleSignOut}>
+            Se déconnecter
+          </Button>
+        </div>
+      </div>
+    </header>
+  );
+}
