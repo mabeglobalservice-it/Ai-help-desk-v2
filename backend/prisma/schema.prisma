@@ -25,9 +25,10 @@ model User {
   isActive     Boolean     @default(true) @map("is_active")
   createdAt    DateTime    @default(now()) @map("created_at")
 
-  ticketsAsEmployee   Ticket[]        @relation("EmployeeTickets")
-  ticketsAsTechnician Ticket[]        @relation("TechnicianTickets")
+  ticketsAsEmployee   Ticket[]           @relation("EmployeeTickets")
+  ticketsAsTechnician Ticket[]           @relation("TechnicianTickets")
   ticketComments      TicketComment[]
+  ticketAttachments   TicketAttachment[]
 
   @@map("users")
 }
@@ -93,6 +94,7 @@ model Ticket {
 
   statusHistory TicketStatusHistory[]
   comments      TicketComment[]
+  attachments   TicketAttachment[]
 
   @@index([status, priorityId, technicianId, categoryId])
   @@map("tickets")
@@ -109,6 +111,22 @@ model TicketComment {
 
   @@index([ticketId, createdAt])
   @@map("ticket_comments")
+}
+
+model TicketAttachment {
+  id             String   @id @default(uuid())
+  ticketId       String   @map("ticket_id")
+  ticket         Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  uploadedById   String   @map("uploaded_by_id")
+  uploadedBy     User     @relation(fields: [uploadedById], references: [id])
+  fileName       String   @map("file_name")
+  storedFileName String   @map("stored_file_name")
+  mimeType       String   @map("mime_type")
+  size           Int
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_attachments")
 }
 
 enum TicketStatus {
