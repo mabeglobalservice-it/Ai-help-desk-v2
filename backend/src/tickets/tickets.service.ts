@@ -4,9 +4,16 @@ import { TicketStatus } from '../../generated/prisma/client';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 
+const USER_SAFE_SELECT = {
+  id: true,
+  email: true,
+  displayName: true,
+  role: true,
+} as const;
+
 const TICKET_INCLUDE = {
-  employee: true,
-  technician: true,
+  employee: { select: USER_SAFE_SELECT },
+  technician: { select: USER_SAFE_SELECT },
   category: true,
   priority: true,
 } as const;
