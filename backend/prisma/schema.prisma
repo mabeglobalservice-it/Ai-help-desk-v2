@@ -25,8 +25,9 @@ model User {
   isActive     Boolean     @default(true) @map("is_active")
   createdAt    DateTime    @default(now()) @map("created_at")
 
-  ticketsAsEmployee   Ticket[] @relation("EmployeeTickets")
-  ticketsAsTechnician Ticket[] @relation("TechnicianTickets")
+  ticketsAsEmployee   Ticket[]        @relation("EmployeeTickets")
+  ticketsAsTechnician Ticket[]        @relation("TechnicianTickets")
+  ticketComments      TicketComment[]
 
   @@map("users")
 }
@@ -91,9 +92,23 @@ model Ticket {
   resolvedAt   DateTime?      @map("resolved_at")
 
   statusHistory TicketStatusHistory[]
+  comments      TicketComment[]
 
   @@index([status, priorityId, technicianId, categoryId])
   @@map("tickets")
+}
+
+model TicketComment {
+  id        String   @id @default(uuid())
+  ticketId  String   @map("ticket_id")
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String   @map("author_id")
+  author    User     @relation(fields: [authorId], references: [id])
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_comments")
 }
 
 enum TicketStatus {
