@@ -2,8 +2,9 @@
 // Le schema complet (12 domaines) sera etendu progressivement, module par module.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
