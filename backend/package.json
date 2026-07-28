@@ -29,9 +29,9 @@
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.2",
-    "@nestjs/mapped-types": "^2.1.1",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/swagger": "^11.4.6",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "bcrypt": "^6.0.0",
@@ -96,6 +96,7 @@
     "prisma@7.9.1": true,
     "unrs-resolver@1.12.2": true,
     "esbuild@0.28.1": true,
-    "bcrypt@6.0.0": true
+    "bcrypt@6.0.0": true,
+    "@scarf/scarf": false
   }
 }
