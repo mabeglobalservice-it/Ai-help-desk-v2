@@ -29,6 +29,7 @@ model User {
   ticketsAsTechnician Ticket[]           @relation("TechnicianTickets")
   ticketComments      TicketComment[]
   ticketAttachments   TicketAttachment[]
+  notifications       Notification[]
 
   @@map("users")
 }
@@ -95,9 +96,30 @@ model Ticket {
   statusHistory TicketStatusHistory[]
   comments      TicketComment[]
   attachments   TicketAttachment[]
+  notifications Notification[]
 
   @@index([status, priorityId, technicianId, categoryId])
   @@map("tickets")
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  recipientId String           @map("recipient_id")
+  recipient   User             @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  message     String
+  ticketId    String?          @map("ticket_id")
+  ticket      Ticket?          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  isRead      Boolean          @default(false) @map("is_read")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@index([recipientId, isRead, createdAt])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  TICKET_ASSIGNED
+  NEW_COMMENT
 }
 
 model TicketComment {

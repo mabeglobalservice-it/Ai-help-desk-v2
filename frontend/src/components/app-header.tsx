@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { clearSession } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { Button } from "@/components/ui/button";
+import { NotificationsBell } from "@/components/notifications-bell";
 
 interface AppHeaderProps {
   title: string;
@@ -29,6 +30,7 @@ export function AppHeader({ title, action }: AppHeaderProps) {
         </div>
         <div className="flex items-center gap-4">
           {action}
+          {user ? <NotificationsBell /> : null}
           {user ? (
             <span className="text-sm text-muted-foreground">
               {user.displayName} · <span className="font-mono text-xs">{user.role}</span>

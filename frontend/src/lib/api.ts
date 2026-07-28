@@ -223,3 +223,22 @@ export async function downloadAttachment(
 
   return response.blob();
 }
+
+export type NotificationType = "TICKET_ASSIGNED" | "NEW_COMMENT";
+
+export interface Notification {
+  id: string;
+  type: NotificationType;
+  message: string;
+  ticketId: string | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export function getNotifications(token: string): Promise<Notification[]> {
+  return apiFetch<Notification[]>("/notifications", token);
+}
+
+export function markNotificationAsRead(token: string, id: string): Promise<Notification> {
+  return apiFetch<Notification>(`/notifications/${id}/read`, token, { method: "PATCH" });
+}

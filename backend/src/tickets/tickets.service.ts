@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { TicketStatus } from '../../generated/prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType, TicketStatus } from '../../generated/prisma/client';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 
@@ -20,7 +21,10 @@ const TICKET_INCLUDE = {
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   private async generateReference(): Promise<string> {
     const year = new Date().getFullYear();
@@ -66,11 +70,11 @@ export class TicketsService {
   }
 
   async update(id: string, dto: UpdateTicketDto) {
-    await this.findOne(id);
+    const existing = await this.findOne(id);
 
     const isResolved = dto.status === TicketStatus.RESOLVED;
 
-    return this.prisma.ticket.update({
+    const updated = await this.prisma.ticket.update({
       where: { id },
       data: {
         categoryId: dto.categoryId,
@@ -84,5 +88,24 @@ export class TicketsService {
       },
       include: TICKET_INCLUDE,
     });
+
+    const isNewAssignment =
+      !!dto.technicianId && dto.technicianId !== existing.technicianId;
+
+    if (isNewAssignment) {
+      try {
+        await this.notificationsService.create({
+          recipientId: dto.technicianId as string,
+          type: NotificationType.TICKET_ASSIGNED,
+          message: `Vous avez été assigné au ticket ${updated.reference}`,
+          ticketId: updated.id,
+        });
+      } catch (error) {
+        // best-effort: a notification failure shouldn't fail the ticket update
+        console.error('Failed to create ticket assignment notification', error);
+      }
+    }
+
+    return updated;
   }
 }
