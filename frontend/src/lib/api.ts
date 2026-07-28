@@ -156,3 +156,70 @@ export function createComment(token: string, ticketId: string, content: string):
     body: JSON.stringify({ content }),
   });
 }
+
+export interface TicketAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  uploadedBy: { id: string; displayName: string; email: string; role: Role };
+}
+
+export const ATTACHMENT_ACCEPT = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/plain",
+  "text/csv",
+].join(",");
+
+export function getAttachments(token: string, ticketId: string): Promise<TicketAttachment[]> {
+  return apiFetch<TicketAttachment[]>(`/tickets/${ticketId}/attachments`, token);
+}
+
+export async function uploadAttachment(
+  token: string,
+  ticketId: string,
+  file: File,
+): Promise<TicketAttachment> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  // Deliberately not using apiFetch: it always sets Content-Type: application/json
+  // when a body is present, which would strip the multipart boundary the browser
+  // sets automatically for FormData.
+  const response = await fetch(`${API_URL}/tickets/${ticketId}/attachments`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorMessage(response));
+  }
+
+  return response.json();
+}
+
+export async function downloadAttachment(
+  token: string,
+  ticketId: string,
+  attachmentId: string,
+): Promise<Blob> {
+  const response = await fetch(`${API_URL}/tickets/${ticketId}/attachments/${attachmentId}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorMessage(response));
+  }
+
+  return response.blob();
+}

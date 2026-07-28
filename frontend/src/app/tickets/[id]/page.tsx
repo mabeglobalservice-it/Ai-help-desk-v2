@@ -1,23 +1,30 @@
 "use client";
 
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ApiError,
+  ATTACHMENT_ACCEPT,
   createComment,
+  downloadAttachment,
+  getAttachments,
   getComments,
   getTicket,
+  uploadAttachment,
+  type TicketAttachment,
   type TicketComment,
   type TicketDetail,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
+import { formatFileSize } from "@/lib/format";
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -42,12 +49,17 @@ export default function TicketDetailPage() {
 
   const [ticket, setTicket] = useState<TicketDetail | null>(null);
   const [comments, setComments] = useState<TicketComment[] | null>(null);
+  const [attachments, setAttachments] = useState<TicketAttachment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   const [newComment, setNewComment] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -56,10 +68,11 @@ export default function TicketDetailPage() {
       return;
     }
 
-    Promise.all([getTicket(token, params.id), getComments(token, params.id)])
-      .then(([ticketData, commentsData]) => {
+    Promise.all([getTicket(token, params.id), getComments(token, params.id), getAttachments(token, params.id)])
+      .then(([ticketData, commentsData, attachmentsData]) => {
         setTicket(ticketData);
         setComments(commentsData);
+        setAttachments(attachmentsData);
       })
       .catch((err) => {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
@@ -99,7 +112,61 @@ export default function TicketDetailPage() {
     }
   }
 
-  const canComment = !!(
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setUploadError(null);
+    setIsUploading(true);
+
+    try {
+      const attachment = await uploadAttachment(token, params.id, file);
+      setAttachments((prev) => (prev ? [...prev, attachment] : [attachment]));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 413) {
+        setUploadError("Le fichier dépasse la taille maximale autorisée (10 Mo).");
+      } else if (err instanceof ApiError) {
+        setUploadError(err.message);
+      } else {
+        setUploadError("Impossible de téléverser le fichier pour le moment.");
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function handleDownload(attachment: TicketAttachment) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setDownloadError(null);
+
+    try {
+      const blob = await downloadAttachment(token, params.id, attachment.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = attachment.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError("Impossible de télécharger ce fichier pour le moment.");
+    }
+  }
+
+  const canContribute = !!(
     user &&
     ticket &&
     (ticket.employee.id === user.id ||
@@ -216,7 +283,7 @@ export default function TicketDetailPage() {
                   </ul>
                 )}
 
-                {canComment ? (
+                {canContribute ? (
                   <form
                     onSubmit={handleAddComment}
                     className="space-y-2 border-t border-border pt-4"
@@ -241,6 +308,69 @@ export default function TicketDetailPage() {
                       {isSubmittingComment ? "Envoi..." : "Ajouter"}
                     </Button>
                   </form>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Pièces jointes</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {attachments === null ? (
+                  <p className="text-sm text-muted-foreground">Chargement des pièces jointes...</p>
+                ) : attachments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Aucune pièce jointe pour le moment.</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {attachments.map((attachment) => (
+                      <li
+                        key={attachment.id}
+                        className="border-t border-border pt-3 first:border-t-0 first:pt-0"
+                      >
+                        <Button
+                          type="button"
+                          variant="link"
+                          className="h-auto p-0 text-sm font-medium"
+                          onClick={() => handleDownload(attachment)}
+                        >
+                          {attachment.fileName}
+                        </Button>
+                        <p className="text-xs text-muted-foreground">
+                          {formatFileSize(attachment.size)} · {dateFormatter.format(new Date(attachment.createdAt))} ·{" "}
+                          {attachment.uploadedBy.displayName}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {downloadError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{downloadError}</AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {canContribute ? (
+                  <div className="space-y-2 border-t border-border pt-4">
+                    <Label htmlFor="attachment-upload">Ajouter un fichier</Label>
+                    <Input
+                      id="attachment-upload"
+                      type="file"
+                      accept={ATTACHMENT_ACCEPT}
+                      onChange={handleFileChange}
+                      disabled={isUploading}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Images, PDF, documents Office ou texte — 10 Mo maximum.
+                    </p>
+                    {isUploading ? <p className="text-xs text-muted-foreground">Envoi en cours...</p> : null}
+                    {uploadError ? (
+                      <Alert variant="destructive">
+                        <AlertDescription>{uploadError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </div>
                 ) : null}
               </CardContent>
             </Card>
