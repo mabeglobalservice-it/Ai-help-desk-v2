@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType, TicketStatus } from '../../generated/prisma/client';
+import {
+  NotificationType,
+  Role,
+  TicketStatus,
+} from '../../generated/prisma/client';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { FindTicketsQueryDto } from './dto/find-tickets-query.dto';
@@ -26,6 +30,12 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
   RESOLVED: 'Résolu',
   ESCALATED: 'Escaladé',
 };
+
+const OPEN_STATUSES = [
+  TicketStatus.NEW,
+  TicketStatus.IN_PROGRESS,
+  TicketStatus.ESCALATED,
+];
 
 @Injectable()
 export class TicketsService {
@@ -87,6 +97,55 @@ export class TicketsService {
     }
 
     return ticket;
+  }
+
+  // Finds technicians in the team(s) matching the ticket's category, falling
+  // back to all active technicians if no team is configured for it, and
+  // suggests whichever candidate currently has the fewest open tickets.
+  async suggestTechnician(id: string) {
+    const ticket = await this.findOne(id);
+
+    const matchingTeams = await this.prisma.team.findMany({
+      where: { categoryId: ticket.categoryId },
+      select: { id: true },
+    });
+    const teamIds = matchingTeams.map((team) => team.id);
+
+    const candidates = await this.prisma.user.findMany({
+      where: {
+        role: Role.TECHNICIAN,
+        isActive: true,
+        ...(teamIds.length > 0 ? { teamId: { in: teamIds } } : {}),
+      },
+      select: { id: true, displayName: true, email: true },
+    });
+
+    if (candidates.length === 0) {
+      throw new NotFoundException(
+        'Aucun technicien disponible pour suggérer une assignation',
+      );
+    }
+
+    const openCounts = await this.prisma.ticket.groupBy({
+      by: ['technicianId'],
+      where: {
+        technicianId: { in: candidates.map((candidate) => candidate.id) },
+        status: { in: OPEN_STATUSES },
+      },
+      _count: { _all: true },
+    });
+    const openCountByTechnicianId = new Map(
+      openCounts.map((entry) => [entry.technicianId, entry._count._all]),
+    );
+
+    const ranked = candidates
+      .map((candidate) => ({
+        ...candidate,
+        openTicketCount: openCountByTechnicianId.get(candidate.id) ?? 0,
+      }))
+      .sort((a, b) => a.openTicketCount - b.openTicketCount);
+
+    return ranked[0];
   }
 
   async update(id: string, dto: UpdateTicketDto, changedById: string) {

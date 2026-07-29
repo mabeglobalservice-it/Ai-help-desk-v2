@@ -73,6 +73,17 @@ export class TicketsController {
     return this.ticketsService.findOne(id);
   }
 
+  @ApiOperation({
+    summary: 'Suggère un technicien à assigner à ce ticket',
+    description:
+      "Cherche parmi les techniciens de l'équipe correspondant à la catégorie du ticket (ou parmi tous les techniciens actifs si aucune équipe ne correspond) celui ayant le moins de tickets ouverts. Réservé aux rôles SUPERVISOR, ADMIN",
+  })
+  @Roles(Role.SUPERVISOR, Role.ADMIN)
+  @Post(':id/suggest-technician')
+  suggestTechnician(@Param('id') id: string) {
+    return this.ticketsService.suggestTechnician(id);
+  }
+
   // Covers status change + reassignment (docs: Technicien assigne, Superviseur)
   @ApiOperation({
     summary: 'Mettre à jour un ticket',

@@ -216,6 +216,19 @@ export function createTicket(token: string, input: CreateTicketInput): Promise<T
   });
 }
 
+export interface SuggestedTechnician {
+  id: string;
+  displayName: string;
+  email: string;
+  openTicketCount: number;
+}
+
+export function suggestTechnician(token: string, ticketId: string): Promise<SuggestedTechnician> {
+  return apiFetch<SuggestedTechnician>(`/tickets/${ticketId}/suggest-technician`, token, {
+    method: "POST",
+  });
+}
+
 export interface TicketDiagnosis {
   title: string;
   categoryId: string;

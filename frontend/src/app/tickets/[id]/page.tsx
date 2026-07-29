@@ -12,6 +12,7 @@ import {
   getComments,
   getTicket,
   getUsers,
+  suggestTechnician,
   updateTicket,
   uploadAttachment,
   type AdminUser,
@@ -78,8 +79,12 @@ export default function TicketDetailPage() {
   const [technicians, setTechnicians] = useState<AdminUser[]>([]);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [selectedTechnicianId, setSelectedTechnicianId] = useState(UNASSIGNED);
   const [assignError, setAssignError] = useState<string | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
+  const [suggestionInfo, setSuggestionInfo] = useState<string | null>(null);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  const [isSuggesting, setIsSuggesting] = useState(false);
 
   useEffect(() => {
     const token = getToken();
@@ -122,6 +127,15 @@ export default function TicketDetailPage() {
       });
   }, [isPrivileged]);
 
+  useEffect(() => {
+    // Intentional: resyncs the pending (unsaved) selection to the server's
+    // current assignment whenever fresh ticket data arrives (initial load or
+    // after a confirmed change), while still letting the user stage a
+    // different pick locally before clicking "Assigner".
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (ticket) setSelectedTechnicianId(ticket.technician?.id ?? UNASSIGNED);
+  }, [ticket]);
+
   async function refreshTicket(token: string) {
     const ticketData = await getTicket(token, params.id);
     setTicket(ticketData);
@@ -146,22 +160,48 @@ export default function TicketDetailPage() {
     }
   }
 
-  async function handleAssignTechnician(newTechnicianId: string) {
+  async function handleAssignTechnician() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    if (!selectedTechnicianId || selectedTechnicianId === UNASSIGNED) return;
+
+    setAssignError(null);
+    setIsAssigning(true);
+    try {
+      await updateTicket(token, params.id, { technicianId: selectedTechnicianId });
+      await refreshTicket(token);
+    } catch (err) {
+      setAssignError(err instanceof ApiError ? err.message : "Impossible d'assigner le technicien pour le moment.");
+    } finally {
+      setIsAssigning(false);
+    }
+  }
+
+  async function handleSuggestTechnician() {
     const token = getToken();
     if (!token) {
       router.replace("/login");
       return;
     }
 
-    setAssignError(null);
-    setIsAssigning(true);
+    setSuggestError(null);
+    setSuggestionInfo(null);
+    setIsSuggesting(true);
     try {
-      await updateTicket(token, params.id, { technicianId: newTechnicianId });
-      await refreshTicket(token);
+      const suggestion = await suggestTechnician(token, params.id);
+      setSelectedTechnicianId(suggestion.id);
+      setSuggestionInfo(
+        `Suggestion : ${suggestion.displayName} (${suggestion.openTicketCount} ticket${suggestion.openTicketCount === 1 ? "" : "s"} ouvert${suggestion.openTicketCount === 1 ? "" : "s"})`,
+      );
     } catch (err) {
-      setAssignError(err instanceof ApiError ? err.message : "Impossible d'assigner le technicien pour le moment.");
+      setSuggestError(
+        err instanceof ApiError ? err.message : "Impossible de suggérer un technicien pour le moment.",
+      );
     } finally {
-      setIsAssigning(false);
+      setIsSuggesting(false);
     }
   }
 
@@ -351,8 +391,8 @@ export default function TicketDetailPage() {
                     {canAssignTechnician ? (
                       <div className="space-y-1.5">
                         <Select
-                          value={ticket.technician?.id ?? UNASSIGNED}
-                          onValueChange={(value) => value && value !== UNASSIGNED && handleAssignTechnician(value)}
+                          value={selectedTechnicianId}
+                          onValueChange={(value) => setSelectedTechnicianId(value ?? UNASSIGNED)}
                           disabled={isAssigning}
                         >
                           <SelectTrigger className="w-full">
@@ -374,6 +414,37 @@ export default function TicketDetailPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleSuggestTechnician}
+                            disabled={isSuggesting}
+                          >
+                            {isSuggesting ? "Suggestion..." : "Suggérer un technicien"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleAssignTechnician}
+                            disabled={
+                              isAssigning ||
+                              selectedTechnicianId === UNASSIGNED ||
+                              selectedTechnicianId === (ticket.technician?.id ?? UNASSIGNED)
+                            }
+                          >
+                            {isAssigning ? "Assignation..." : "Assigner"}
+                          </Button>
+                        </div>
+                        {suggestionInfo ? (
+                          <p className="text-xs text-muted-foreground">{suggestionInfo}</p>
+                        ) : null}
+                        {suggestError ? (
+                          <Alert variant="destructive">
+                            <AlertDescription>{suggestError}</AlertDescription>
+                          </Alert>
+                        ) : null}
                         {assignError ? (
                           <Alert variant="destructive">
                             <AlertDescription>{assignError}</AlertDescription>
