@@ -85,15 +85,26 @@ export interface Ticket {
   priority: { id: string; name: string; level: number };
 }
 
-export function getTickets(token: string): Promise<Ticket[]> {
-  return apiFetch<Ticket[]>("/tickets", token);
+export interface TicketsFilter {
+  status?: TicketStatus;
+  categoryId?: string;
+  priorityId?: string;
+}
+
+export function getTickets(token: string, filter: TicketsFilter = {}): Promise<Ticket[]> {
+  const params = new URLSearchParams();
+  if (filter.status) params.set("status", filter.status);
+  if (filter.categoryId) params.set("categoryId", filter.categoryId);
+  if (filter.priorityId) params.set("priorityId", filter.priorityId);
+  const query = params.toString();
+  return apiFetch<Ticket[]>(`/tickets${query ? `?${query}` : ""}`, token);
 }
 
 export interface TicketStatusHistoryEntry {
   id: string;
   fromStatus: TicketStatus | null;
   toStatus: TicketStatus;
-  changedBy: string;
+  changedBy: { id: string; displayName: string; email: string };
   changedAt: string;
 }
 
@@ -103,6 +114,18 @@ export interface TicketDetail extends Ticket {
 
 export function getTicket(token: string, id: string): Promise<TicketDetail> {
   return apiFetch<TicketDetail>(`/tickets/${id}`, token);
+}
+
+export interface UpdateTicketInput {
+  status?: TicketStatus;
+  technicianId?: string;
+}
+
+export function updateTicket(token: string, id: string, input: UpdateTicketInput): Promise<Ticket> {
+  return apiFetch<Ticket>(`/tickets/${id}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
 }
 
 export interface TicketCategory {
@@ -122,6 +145,58 @@ export interface Priority {
 
 export function getPriorities(token: string): Promise<Priority[]> {
   return apiFetch<Priority[]>("/priorities", token);
+}
+
+export interface Department {
+  id: string;
+  name: string;
+}
+
+export function getDepartments(token: string): Promise<Department[]> {
+  return apiFetch<Department[]>("/departments", token);
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: Role;
+  departmentId: string | null;
+  department: Department | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export function getUsers(token: string): Promise<AdminUser[]> {
+  return apiFetch<AdminUser[]>("/users", token);
+}
+
+export interface CreateUserInput {
+  email: string;
+  password: string;
+  displayName: string;
+  role: Role;
+  departmentId?: string;
+}
+
+export function createUser(token: string, input: CreateUserInput): Promise<AdminUser> {
+  return apiFetch<AdminUser>("/users", token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface UpdateUserInput {
+  role?: Role;
+  isActive?: boolean;
+  departmentId?: string;
+}
+
+export function updateUser(token: string, id: string, input: UpdateUserInput): Promise<AdminUser> {
+  return apiFetch<AdminUser>(`/users/${id}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
 }
 
 export interface CreateTicketInput {

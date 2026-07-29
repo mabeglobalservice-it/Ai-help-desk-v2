@@ -4,6 +4,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType, TicketStatus } from '../../generated/prisma/client';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
+import { FindTicketsQueryDto } from './dto/find-tickets-query.dto';
 
 const USER_SAFE_SELECT = {
   id: true,
@@ -49,8 +50,13 @@ export class TicketsService {
     });
   }
 
-  async findAll() {
+  async findAll(query: FindTicketsQueryDto) {
     return this.prisma.ticket.findMany({
+      where: {
+        status: query.status,
+        categoryId: query.categoryId,
+        priorityId: query.priorityId,
+      },
       include: TICKET_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -59,7 +65,13 @@ export class TicketsService {
   async findOne(id: string) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id },
-      include: { ...TICKET_INCLUDE, statusHistory: { orderBy: { changedAt: 'desc' } } },
+      include: {
+        ...TICKET_INCLUDE,
+        statusHistory: {
+          orderBy: { changedAt: 'desc' },
+          include: { changedBy: { select: USER_SAFE_SELECT } },
+        },
+      },
     });
 
     if (!ticket) {
@@ -69,24 +81,40 @@ export class TicketsService {
     return ticket;
   }
 
-  async update(id: string, dto: UpdateTicketDto) {
+  async update(id: string, dto: UpdateTicketDto, changedById: string) {
     const existing = await this.findOne(id);
 
     const isResolved = dto.status === TicketStatus.RESOLVED;
+    const isStatusChange = !!dto.status && dto.status !== existing.status;
 
-    const updated = await this.prisma.ticket.update({
-      where: { id },
-      data: {
-        categoryId: dto.categoryId,
-        priorityId: dto.priorityId,
-        title: dto.title,
-        summary: dto.summary,
-        technicianId: dto.technicianId,
-        ciId: dto.ciId,
-        status: dto.status,
-        resolvedAt: isResolved ? new Date() : undefined,
-      },
-      include: TICKET_INCLUDE,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const ticket = await tx.ticket.update({
+        where: { id },
+        data: {
+          categoryId: dto.categoryId,
+          priorityId: dto.priorityId,
+          title: dto.title,
+          summary: dto.summary,
+          technicianId: dto.technicianId,
+          ciId: dto.ciId,
+          status: dto.status,
+          resolvedAt: isResolved ? new Date() : undefined,
+        },
+        include: TICKET_INCLUDE,
+      });
+
+      if (isStatusChange) {
+        await tx.ticketStatusHistory.create({
+          data: {
+            ticketId: id,
+            fromStatus: existing.status,
+            toStatus: dto.status as TicketStatus,
+            changedById,
+          },
+        });
+      }
+
+      return ticket;
     });
 
     const isNewAssignment =

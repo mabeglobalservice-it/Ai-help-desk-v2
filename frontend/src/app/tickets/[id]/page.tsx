@@ -11,10 +11,14 @@ import {
   getAttachments,
   getComments,
   getTicket,
+  getUsers,
+  updateTicket,
   uploadAttachment,
+  type AdminUser,
   type TicketAttachment,
   type TicketComment,
   type TicketDetail,
+  type TicketStatus,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
@@ -26,7 +30,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+
+const ALL_STATUSES = Object.keys(STATUS_DISPLAY) as TicketStatus[];
+const UNASSIGNED = "UNASSIGNED";
 
 const dateFormatter = new Intl.DateTimeFormat("fr-CA", {
   dateStyle: "medium",
@@ -61,6 +75,12 @@ export default function TicketDetailPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
+  const [technicians, setTechnicians] = useState<AdminUser[]>([]);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [isAssigning, setIsAssigning] = useState(false);
+
   useEffect(() => {
     const token = getToken();
     if (!token) {
@@ -87,6 +107,63 @@ export default function TicketDetailPage() {
         setError("Impossible de charger ce ticket pour le moment.");
       });
   }, [router, params.id]);
+
+  const isPrivileged = user?.role === "SUPERVISOR" || user?.role === "ADMIN";
+
+  useEffect(() => {
+    if (!isPrivileged) return;
+    const token = getToken();
+    if (!token) return;
+
+    getUsers(token)
+      .then((users) => setTechnicians(users.filter((u) => u.role === "TECHNICIAN" && u.isActive)))
+      .catch(() => {
+        // best-effort: the assignment dropdown just stays empty
+      });
+  }, [isPrivileged]);
+
+  async function refreshTicket(token: string) {
+    const ticketData = await getTicket(token, params.id);
+    setTicket(ticketData);
+  }
+
+  async function handleStatusChange(newStatus: TicketStatus) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setStatusError(null);
+    setIsUpdatingStatus(true);
+    try {
+      await updateTicket(token, params.id, { status: newStatus });
+      await refreshTicket(token);
+    } catch (err) {
+      setStatusError(err instanceof ApiError ? err.message : "Impossible de changer le statut pour le moment.");
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  }
+
+  async function handleAssignTechnician(newTechnicianId: string) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setAssignError(null);
+    setIsAssigning(true);
+    try {
+      await updateTicket(token, params.id, { technicianId: newTechnicianId });
+      await refreshTicket(token);
+    } catch (err) {
+      setAssignError(err instanceof ApiError ? err.message : "Impossible d'assigner le technicien pour le moment.");
+    } finally {
+      setIsAssigning(false);
+    }
+  }
 
   async function handleAddComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -175,6 +252,14 @@ export default function TicketDetailPage() {
       user.role === "ADMIN")
   );
 
+  const canChangeStatus = !!(
+    user &&
+    ticket &&
+    (ticket.technician?.id === user.id || user.role === "SUPERVISOR" || user.role === "ADMIN")
+  );
+
+  const canAssignTechnician = isPrivileged;
+
   const backLink = (
     <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/tickets" />}>
       Retour aux tickets
@@ -205,11 +290,37 @@ export default function TicketDetailPage() {
               <CardHeader>
                 <div className="flex items-start justify-between gap-4">
                   <CardTitle className="text-xl">{ticket.title}</CardTitle>
-                  <span className="inline-flex shrink-0 items-center gap-1.5 text-sm">
-                    <span className={`size-1.5 rounded-full ${STATUS_DISPLAY[ticket.status].dot}`} />
-                    {STATUS_DISPLAY[ticket.status].label}
-                  </span>
+                  {canChangeStatus ? (
+                    <Select
+                      value={ticket.status}
+                      onValueChange={(value) => value && handleStatusChange(value as TicketStatus)}
+                      disabled={isUpdatingStatus}
+                    >
+                      <SelectTrigger className="w-40 shrink-0">
+                        <SelectValue placeholder="Statut">
+                          {(value: string | null) => (value ? STATUS_DISPLAY[value as TicketStatus].label : "Statut")}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ALL_STATUSES.map((status) => (
+                          <SelectItem key={status} value={status}>
+                            {STATUS_DISPLAY[status].label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span className="inline-flex shrink-0 items-center gap-1.5 text-sm">
+                      <span className={`size-1.5 rounded-full ${STATUS_DISPLAY[ticket.status].dot}`} />
+                      {STATUS_DISPLAY[ticket.status].label}
+                    </span>
+                  )}
                 </div>
+                {statusError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{statusError}</AlertDescription>
+                  </Alert>
+                ) : null}
               </CardHeader>
               <CardContent className="space-y-6">
                 <div>
@@ -237,7 +348,39 @@ export default function TicketDetailPage() {
                     <span className="block text-xs text-muted-foreground">{ticket.employee.email}</span>
                   </Field>
                   <Field label="Technicien assigné">
-                    {ticket.technician ? (
+                    {canAssignTechnician ? (
+                      <div className="space-y-1.5">
+                        <Select
+                          value={ticket.technician?.id ?? UNASSIGNED}
+                          onValueChange={(value) => value && value !== UNASSIGNED && handleAssignTechnician(value)}
+                          disabled={isAssigning}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Assigner un technicien">
+                              {(value: string | null) =>
+                                value && value !== UNASSIGNED
+                                  ? (technicians.find((tech) => tech.id === value)?.displayName ??
+                                    ticket.technician?.displayName ??
+                                    "Assigner un technicien")
+                                  : "Assigner un technicien"
+                              }
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {technicians.map((tech) => (
+                              <SelectItem key={tech.id} value={tech.id}>
+                                {tech.displayName}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {assignError ? (
+                          <Alert variant="destructive">
+                            <AlertDescription>{assignError}</AlertDescription>
+                          </Alert>
+                        ) : null}
+                      </div>
+                    ) : ticket.technician ? (
                       <>
                         {ticket.technician.displayName}
                         <span className="block text-xs text-muted-foreground">{ticket.technician.email}</span>
@@ -385,14 +528,16 @@ export default function TicketDetailPage() {
                 ) : (
                   <ul className="space-y-3">
                     {ticket.statusHistory.map((entry) => (
-                      <li key={entry.id} className="flex items-center justify-between text-sm">
+                      <li key={entry.id} className="text-sm">
                         <span>
                           {entry.fromStatus ? STATUS_DISPLAY[entry.fromStatus].label : "—"}
                           {" → "}
                           {STATUS_DISPLAY[entry.toStatus].label}
+                          {" par "}
+                          <span className="font-medium">{entry.changedBy.displayName}</span>
                         </span>
-                        <span className="text-xs text-muted-foreground">
-                          {dateFormatter.format(new Date(entry.changedAt))}
+                        <span className="block text-xs text-muted-foreground">
+                          le {dateFormatter.format(new Date(entry.changedAt))}
                         </span>
                       </li>
                     ))}

@@ -25,11 +25,12 @@ model User {
   isActive     Boolean     @default(true) @map("is_active")
   createdAt    DateTime    @default(now()) @map("created_at")
 
-  ticketsAsEmployee   Ticket[]           @relation("EmployeeTickets")
-  ticketsAsTechnician Ticket[]           @relation("TechnicianTickets")
+  ticketsAsEmployee   Ticket[]              @relation("EmployeeTickets")
+  ticketsAsTechnician Ticket[]              @relation("TechnicianTickets")
   ticketComments      TicketComment[]
   ticketAttachments   TicketAttachment[]
   notifications       Notification[]
+  ticketStatusChanges TicketStatusHistory[]
 
   @@map("users")
 }
@@ -181,14 +182,16 @@ model Priority {
 }
 
 model TicketStatusHistory {
-  id         String   @id @default(uuid())
-  ticketId   String   @map("ticket_id")
-  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  fromStatus String?  @map("from_status")
-  toStatus   String   @map("to_status")
-  changedBy  String   @map("changed_by")
-  changedAt  DateTime @default(now()) @map("changed_at")
+  id          String       @id @default(uuid())
+  ticketId    String       @map("ticket_id")
+  ticket      Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromStatus  TicketStatus? @map("from_status")
+  toStatus    TicketStatus @map("to_status")
+  changedById String       @map("changed_by")
+  changedBy   User         @relation(fields: [changedById], references: [id])
+  changedAt   DateTime     @default(now()) @map("changed_at")
 
+  @@index([ticketId, changedAt])
   @@map("ticket_status_history")
 }
 

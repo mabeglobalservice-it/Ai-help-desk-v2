@@ -3,12 +3,29 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ApiError, getTickets, type Ticket } from "@/lib/api";
+import {
+  ApiError,
+  getPriorities,
+  getTicketCategories,
+  getTickets,
+  type Priority,
+  type Ticket,
+  type TicketCategory,
+  type TicketStatus,
+} from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -24,11 +41,36 @@ const dateFormatter = new Intl.DateTimeFormat("fr-CA", {
   timeStyle: "short",
 });
 
+const ALL_STATUSES = Object.keys(STATUS_DISPLAY) as TicketStatus[];
+const ALL = "ALL";
+
 export default function TicketsPage() {
   const router = useRouter();
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const user = useSessionUser();
+
+  const [categories, setCategories] = useState<TicketCategory[]>([]);
+  const [priorities, setPriorities] = useState<Priority[]>([]);
+  const [statusFilter, setStatusFilter] = useState<TicketStatus | typeof ALL>(ALL);
+  const [categoryFilter, setCategoryFilter] = useState(ALL);
+  const [priorityFilter, setPriorityFilter] = useState(ALL);
+
+  const hasActiveFilter = statusFilter !== ALL || categoryFilter !== ALL || priorityFilter !== ALL;
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+
+    Promise.all([getTicketCategories(token), getPriorities(token)])
+      .then(([categoryList, priorityList]) => {
+        setCategories(categoryList);
+        setPriorities(priorityList);
+      })
+      .catch(() => {
+        // best-effort: filter dropdowns just stay empty if this fails
+      });
+  }, []);
 
   useEffect(() => {
     const token = getToken();
@@ -37,8 +79,15 @@ export default function TicketsPage() {
       return;
     }
 
-    getTickets(token)
-      .then(setTickets)
+    getTickets(token, {
+      status: statusFilter === ALL ? undefined : statusFilter,
+      categoryId: categoryFilter === ALL ? undefined : categoryFilter,
+      priorityId: priorityFilter === ALL ? undefined : priorityFilter,
+    })
+      .then((data) => {
+        setTickets(data);
+        setError(null);
+      })
       .catch((err) => {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           clearSession();
@@ -47,7 +96,13 @@ export default function TicketsPage() {
         }
         setError("Impossible de charger les tickets pour le moment.");
       });
-  }, [router]);
+  }, [router, statusFilter, categoryFilter, priorityFilter]);
+
+  function resetFilters() {
+    setStatusFilter(ALL);
+    setCategoryFilter(ALL);
+    setPriorityFilter(ALL);
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -63,6 +118,84 @@ export default function TicketsPage() {
       />
 
       <main className="mx-auto max-w-5xl px-6 py-8">
+        <div className="mb-6 flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filter-status">Statut</Label>
+            <Select
+              value={statusFilter}
+              onValueChange={(value) => setStatusFilter(value as TicketStatus | typeof ALL)}
+            >
+              <SelectTrigger id="filter-status" className="w-40">
+                <SelectValue placeholder="Tous les statuts">
+                  {(value: string | null) =>
+                    value && value !== ALL ? STATUS_DISPLAY[value as TicketStatus].label : "Tous les statuts"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Tous les statuts</SelectItem>
+                {ALL_STATUSES.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {STATUS_DISPLAY[status].label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filter-category">Catégorie</Label>
+            <Select value={categoryFilter} onValueChange={(value) => setCategoryFilter(value ?? ALL)}>
+              <SelectTrigger id="filter-category" className="w-44">
+                <SelectValue placeholder="Toutes les catégories">
+                  {(value: string | null) =>
+                    value && value !== ALL
+                      ? (categories.find((category) => category.id === value)?.name ?? "Toutes les catégories")
+                      : "Toutes les catégories"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Toutes les catégories</SelectItem>
+                {categories.map((category) => (
+                  <SelectItem key={category.id} value={category.id}>
+                    {category.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filter-priority">Priorité</Label>
+            <Select value={priorityFilter} onValueChange={(value) => setPriorityFilter(value ?? ALL)}>
+              <SelectTrigger id="filter-priority" className="w-40">
+                <SelectValue placeholder="Toutes les priorités">
+                  {(value: string | null) =>
+                    value && value !== ALL
+                      ? (priorities.find((priority) => priority.id === value)?.name ?? "Toutes les priorités")
+                      : "Toutes les priorités"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>Toutes les priorités</SelectItem>
+                {priorities.map((priority) => (
+                  <SelectItem key={priority.id} value={priority.id}>
+                    {priority.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {hasActiveFilter ? (
+            <Button variant="ghost" size="sm" onClick={resetFilters}>
+              Réinitialiser
+            </Button>
+          ) : null}
+        </div>
+
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
@@ -71,11 +204,15 @@ export default function TicketsPage() {
           <p className="text-sm text-muted-foreground">Chargement des tickets...</p>
         ) : tickets.length === 0 ? (
           <div className="rounded-md border border-dashed border-border py-16 text-center">
-            <p className="font-medium">Aucun ticket pour le moment.</p>
+            <p className="font-medium">
+              {hasActiveFilter ? "Aucun ticket ne correspond à ces filtres." : "Aucun ticket pour le moment."}
+            </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {user?.role === "EMPLOYEE"
-                ? "Créez votre premier ticket pour démarrer."
-                : "Les nouveaux tickets créés apparaîtront ici."}
+              {hasActiveFilter
+                ? "Essayez de réinitialiser les filtres."
+                : user?.role === "EMPLOYEE"
+                  ? "Créez votre premier ticket pour démarrer."
+                  : "Les nouveaux tickets créés apparaîtront ici."}
             </p>
           </div>
         ) : (

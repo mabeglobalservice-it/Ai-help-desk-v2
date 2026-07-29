@@ -21,4 +21,10 @@ export class CatalogController {
   findAllPriorities() {
     return this.catalogService.findAllPriorities();
   }
+
+  @ApiOperation({ summary: 'Lister les départements' })
+  @Get('departments')
+  findAllDepartments() {
+    return this.catalogService.findAllDepartments();
+  }
 }

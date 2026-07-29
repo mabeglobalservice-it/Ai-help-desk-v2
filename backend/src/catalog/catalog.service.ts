@@ -12,4 +12,8 @@ export class CatalogService {
   findAllPriorities() {
     return this.prisma.priority.findMany({ orderBy: { level: 'asc' } });
   }
+
+  findAllDepartments() {
+    return this.prisma.department.findMany({ orderBy: { name: 'asc' } });
+  }
 }

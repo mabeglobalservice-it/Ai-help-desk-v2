@@ -2,7 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateTicketDto {
-  @ApiProperty({ format: 'uuid', description: "ID de l'employé à l'origine du ticket" })
+  @ApiProperty({
+    format: 'uuid',
+    description: "ID de l'employé à l'origine du ticket",
+  })
   @IsUUID()
   employeeId: string;
 
@@ -29,7 +32,10 @@ export class CreateTicketDto {
   @IsUUID()
   technicianId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Configuration Item concerné' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Configuration Item concerné',
+  })
   @IsOptional()
   @IsUUID()
   ciId?: string;
