@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
 import { NotificationType } from '../../generated/prisma/client';
 
 interface CreateNotificationInput {
@@ -11,10 +12,32 @@ interface CreateNotificationInput {
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
+  ) {}
 
-  create(input: CreateNotificationInput) {
-    return this.prisma.notification.create({ data: input });
+  async create(input: CreateNotificationInput) {
+    const notification = await this.prisma.notification.create({ data: input });
+
+    const recipient = await this.prisma.user.findUnique({
+      where: { id: input.recipientId },
+      select: { email: true, displayName: true },
+    });
+
+    if (recipient) {
+      await this.emailService.sendNotificationEmail({
+        to: recipient.email,
+        displayName: recipient.displayName,
+        type: input.type,
+        message: input.message,
+        ticketUrl: input.ticketId
+          ? `${process.env.FRONTEND_URL ?? 'http://localhost:3002'}/tickets/${input.ticketId}`
+          : undefined,
+      });
+    }
+
+    return notification;
   }
 
   findAllForUser(userId: string) {

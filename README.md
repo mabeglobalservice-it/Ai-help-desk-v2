@@ -61,6 +61,7 @@ cp .env.example .env
 | `JWT_SECRET` | Secret de signature des JWT. Générer une valeur aléatoire : `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
 | `JWT_EXPIRES_IN` | Durée de vie du token (ex. `1h`) |
 | `FRONTEND_URL` | Origine autorisée en CORS — doit correspondre au port du frontend (`http://localhost:3002` par défaut) |
+| `RESEND_API_KEY` | Clé API [Resend](https://resend.com/api-keys), utilisée pour envoyer un email à chaque notification (assignation de ticket, nouveau commentaire) |
 
 **Frontend** (`frontend/.env.local`, à partir de `frontend/.env.local.example`) :
 
