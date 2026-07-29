@@ -20,6 +20,13 @@ const TICKET_INCLUDE = {
   priority: true,
 } as const;
 
+const STATUS_LABELS: Record<TicketStatus, string> = {
+  NEW: 'Nouveau',
+  IN_PROGRESS: 'En cours',
+  RESOLVED: 'Résolu',
+  ESCALATED: 'Escaladé',
+};
+
 @Injectable()
 export class TicketsService {
   constructor(
@@ -134,6 +141,49 @@ export class TicketsService {
       }
     }
 
+    if (isStatusChange) {
+      await this.notifyOnStatusChange(
+        updated,
+        existing.status,
+        dto.status as TicketStatus,
+        changedById,
+      );
+    }
+
     return updated;
+  }
+
+  // Notifies the ticket owner and the assigned technician, excluding whoever made the change
+  private async notifyOnStatusChange(
+    ticket: {
+      id: string;
+      reference: string;
+      employeeId: string;
+      technicianId: string | null;
+    },
+    fromStatus: TicketStatus,
+    toStatus: TicketStatus,
+    changedById: string,
+  ) {
+    const recipientIds = new Set<string>();
+    if (ticket.employeeId !== changedById) recipientIds.add(ticket.employeeId);
+    if (ticket.technicianId && ticket.technicianId !== changedById)
+      recipientIds.add(ticket.technicianId);
+
+    try {
+      await Promise.all(
+        [...recipientIds].map((recipientId) =>
+          this.notificationsService.create({
+            recipientId,
+            type: NotificationType.STATUS_CHANGED,
+            message: `Le ticket ${ticket.reference} est passé de ${STATUS_LABELS[fromStatus]} à ${STATUS_LABELS[toStatus]}`,
+            ticketId: ticket.id,
+          }),
+        ),
+      );
+    } catch (error) {
+      // best-effort: a notification failure shouldn't fail the ticket update
+      console.error('Failed to create status-change notification', error);
+    }
   }
 }

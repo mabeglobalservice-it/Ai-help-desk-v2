@@ -7,6 +7,7 @@ const FROM_ADDRESS = 'onboarding@resend.dev';
 const SUBJECT_BY_TYPE: Record<NotificationType, string> = {
   TICKET_ASSIGNED: 'Ticket assigné',
   NEW_COMMENT: 'Nouveau commentaire',
+  STATUS_CHANGED: 'Statut modifié',
 };
 
 interface SendNotificationEmailInput {
@@ -24,7 +25,9 @@ export class EmailService {
     ? new Resend(process.env.RESEND_API_KEY)
     : null;
 
-  async sendNotificationEmail(input: SendNotificationEmailInput): Promise<void> {
+  async sendNotificationEmail(
+    input: SendNotificationEmailInput,
+  ): Promise<void> {
     if (!this.resend) {
       this.logger.warn('RESEND_API_KEY absente : email de notification ignoré');
       return;
@@ -41,15 +44,24 @@ export class EmailService {
       // The Resend SDK reports API-level failures (invalid recipient, quota, ...)
       // via this `error` field rather than throwing.
       if (error) {
-        this.logger.error(`Échec de l'envoi de l'email de notification à ${input.to} : ${error.message}`);
+        this.logger.error(
+          `Échec de l'envoi de l'email de notification à ${input.to} : ${error.message}`,
+        );
       }
     } catch (error) {
       // best-effort: a failed email shouldn't break the notification flow that triggered it
-      this.logger.error(`Échec de l'envoi de l'email de notification à ${input.to}`, error);
+      this.logger.error(
+        `Échec de l'envoi de l'email de notification à ${input.to}`,
+        error,
+      );
     }
   }
 
-  private buildHtml({ displayName, message, ticketUrl }: SendNotificationEmailInput): string {
+  private buildHtml({
+    displayName,
+    message,
+    ticketUrl,
+  }: SendNotificationEmailInput): string {
     return `
       <div style="font-family: -apple-system, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; color: #1f2933;">
         <p>Bonjour ${displayName},</p>

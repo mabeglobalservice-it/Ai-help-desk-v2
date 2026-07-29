@@ -299,7 +299,7 @@ export async function downloadAttachment(
   return response.blob();
 }
 
-export type NotificationType = "TICKET_ASSIGNED" | "NEW_COMMENT";
+export type NotificationType = "TICKET_ASSIGNED" | "NEW_COMMENT" | "STATUS_CHANGED";
 
 export interface Notification {
   id: string;

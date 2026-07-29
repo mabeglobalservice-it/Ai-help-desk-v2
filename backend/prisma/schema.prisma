@@ -121,6 +121,7 @@ model Notification {
 enum NotificationType {
   TICKET_ASSIGNED
   NEW_COMMENT
+  STATUS_CHANGED
 }
 
 model TicketComment {
