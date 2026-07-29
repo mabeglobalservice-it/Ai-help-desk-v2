@@ -31,12 +31,18 @@ export class EmailService {
     }
 
     try {
-      await this.resend.emails.send({
+      const { error } = await this.resend.emails.send({
         from: FROM_ADDRESS,
         to: input.to,
         subject: `AI Help Desk — ${SUBJECT_BY_TYPE[input.type]}`,
         html: this.buildHtml(input),
       });
+
+      // The Resend SDK reports API-level failures (invalid recipient, quota, ...)
+      // via this `error` field rather than throwing.
+      if (error) {
+        this.logger.error(`Échec de l'envoi de l'email de notification à ${input.to} : ${error.message}`);
+      }
     } catch (error) {
       // best-effort: a failed email shouldn't break the notification flow that triggered it
       this.logger.error(`Échec de l'envoi de l'email de notification à ${input.to}`, error);
