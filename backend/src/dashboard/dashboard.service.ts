@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TicketStatus } from '../../generated/prisma/client';
+import { DashboardStatsQueryDto } from './dto/dashboard-stats-query.dto';
 
 const OPEN_STATUSES = [
   TicketStatus.NEW,
@@ -8,11 +9,35 @@ const OPEN_STATUSES = [
   TicketStatus.ESCALATED,
 ];
 
+interface DateRangeWhere {
+  createdAt: { gte?: Date; lte?: Date };
+}
+
 @Injectable()
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getStats() {
+  // `to` is inclusive of the whole day, so it's bumped to 23:59:59.999
+  private buildDateRangeWhere({
+    from,
+    to,
+  }: DashboardStatsQueryDto): DateRangeWhere | undefined {
+    if (!from && !to) return undefined;
+
+    const createdAt: { gte?: Date; lte?: Date } = {};
+    if (from) createdAt.gte = new Date(from);
+    if (to) {
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+
+    return { createdAt };
+  }
+
+  async getStats(query: DashboardStatsQueryDto) {
+    const dateWhere = this.buildDateRangeWhere(query);
+
     const [
       totalOpen,
       totalResolved,
@@ -21,18 +46,28 @@ export class DashboardService {
       technicianCounts,
       categories,
     ] = await Promise.all([
-      this.prisma.ticket.count({ where: { status: { in: OPEN_STATUSES } } }),
-      this.prisma.ticket.count({ where: { status: TicketStatus.RESOLVED } }),
+      this.prisma.ticket.count({
+        where: { ...dateWhere, status: { in: OPEN_STATUSES } },
+      }),
+      this.prisma.ticket.count({
+        where: { ...dateWhere, status: TicketStatus.RESOLVED },
+      }),
       this.prisma.ticket.findMany({
-        where: { status: TicketStatus.RESOLVED, resolvedAt: { not: null } },
+        where: {
+          ...dateWhere,
+          status: TicketStatus.RESOLVED,
+          resolvedAt: { not: null },
+        },
         select: { createdAt: true, resolvedAt: true },
       }),
       this.prisma.ticket.groupBy({
         by: ['categoryId'],
+        where: dateWhere,
         _count: { _all: true },
       }),
       this.prisma.ticket.groupBy({
         by: ['technicianId'],
+        where: dateWhere,
         _count: { _all: true },
       }),
       this.prisma.ticketCategory.findMany({ select: { id: true, name: true } }),

@@ -251,6 +251,18 @@ export interface DashboardStats {
   byTechnician: { technicianId: string; technicianName: string; count: number }[];
 }
 
-export function getDashboardStats(token: string): Promise<DashboardStats> {
-  return apiFetch<DashboardStats>("/dashboard/stats", token);
+export interface DashboardStatsFilter {
+  from?: string;
+  to?: string;
+}
+
+export function getDashboardStats(
+  token: string,
+  filter: DashboardStatsFilter = {},
+): Promise<DashboardStats> {
+  const params = new URLSearchParams();
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  const query = params.toString();
+  return apiFetch<DashboardStats>(`/dashboard/stats${query ? `?${query}` : ""}`, token);
 }

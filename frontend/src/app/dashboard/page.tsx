@@ -17,6 +17,9 @@ import { useSessionUser } from "@/lib/use-session-user";
 import { AppHeader } from "@/components/app-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const DASHBOARD_ROLES = new Set(["SUPERVISOR", "ADMIN"]);
 
@@ -31,6 +34,8 @@ export default function DashboardPage() {
   const user = useSessionUser();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   useEffect(() => {
     const token = getToken();
@@ -41,8 +46,11 @@ export default function DashboardPage() {
     if (user && !DASHBOARD_ROLES.has(user.role)) return;
     if (!user) return;
 
-    getDashboardStats(token)
-      .then(setStats)
+    getDashboardStats(token, { from: fromDate || undefined, to: toDate || undefined })
+      .then((data) => {
+        setStats(data);
+        setError(null);
+      })
       .catch((err) => {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           clearSession();
@@ -51,7 +59,12 @@ export default function DashboardPage() {
         }
         setError("Impossible de charger les statistiques pour le moment.");
       });
-  }, [router, user]);
+  }, [router, user, fromDate, toDate]);
+
+  function resetDateFilter() {
+    setFromDate("");
+    setToDate("");
+  }
 
   if (user && !DASHBOARD_ROLES.has(user.role)) {
     return (
@@ -73,6 +86,36 @@ export default function DashboardPage() {
       <AppHeader title="Tableau de bord" />
 
       <main className="mx-auto max-w-5xl px-6 py-8">
+        <div className="mb-6 flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dashboard-from-date">Du</Label>
+            <Input
+              id="dashboard-from-date"
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(event) => setFromDate(event.target.value)}
+              className="w-40"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dashboard-to-date">Au</Label>
+            <Input
+              id="dashboard-to-date"
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(event) => setToDate(event.target.value)}
+              className="w-40"
+            />
+          </div>
+          {fromDate || toDate ? (
+            <Button variant="ghost" size="sm" onClick={resetDateFilter}>
+              Réinitialiser
+            </Button>
+          ) : null}
+        </div>
+
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
