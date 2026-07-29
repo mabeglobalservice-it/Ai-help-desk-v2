@@ -62,6 +62,7 @@ cp .env.example .env
 | `JWT_EXPIRES_IN` | Durée de vie du token (ex. `1h`) |
 | `FRONTEND_URL` | Origine autorisée en CORS — doit correspondre au port du frontend (`http://localhost:3002` par défaut) |
 | `RESEND_API_KEY` | Clé API [Resend](https://resend.com/api-keys), utilisée pour envoyer un email à chaque notification (assignation de ticket, nouveau commentaire) |
+| `ANTHROPIC_API_KEY` | Clé API [Anthropic](https://console.anthropic.com/settings/keys), utilisée pour l'analyse IA d'un ticket à la création (`POST /tickets/ai-diagnose`) |
 
 **Frontend** (`frontend/.env.local`, à partir de `frontend/.env.local.example`) :
 

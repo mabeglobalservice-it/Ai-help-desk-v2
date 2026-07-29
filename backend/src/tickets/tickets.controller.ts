@@ -15,17 +15,22 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role } from '../../generated/prisma/client';
+import { AiService } from '../ai/ai.service';
 import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { FindTicketsQueryDto } from './dto/find-tickets-query.dto';
+import { AiDiagnoseDto } from '../ai/dto/ai-diagnose.dto';
 
 @ApiTags('tickets')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('tickets')
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(
+    private readonly ticketsService: TicketsService,
+    private readonly aiService: AiService,
+  ) {}
 
   // docs/11-documentation-api.md, module Tickets: creation reserved to Employe
   @ApiOperation({
@@ -36,6 +41,17 @@ export class TicketsController {
   @Post()
   create(@Body() createTicketDto: CreateTicketDto) {
     return this.ticketsService.create(createTicketDto);
+  }
+
+  @ApiOperation({
+    summary: 'Analyse une description en langage naturel via IA',
+    description:
+      'Suggère un titre, une catégorie et une priorité pour aider à préremplir le formulaire de création. Réservé au rôle EMPLOYEE',
+  })
+  @Roles(Role.EMPLOYEE)
+  @Post('ai-diagnose')
+  aiDiagnose(@Body() dto: AiDiagnoseDto) {
+    return this.aiService.diagnoseTicket(dto.description);
   }
 
   // Listing/detail: any authenticated role for now (ownership-based

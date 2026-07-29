@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  aiDiagnoseTicket,
   ApiError,
   createTicket,
   getPriorities,
@@ -42,6 +43,9 @@ export default function NewTicketPage() {
   const [priorityId, setPriorityId] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   useEffect(() => {
     const token = getToken();
@@ -89,6 +93,28 @@ export default function NewTicketPage() {
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Impossible de créer le ticket pour le moment.");
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleAnalyze() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setAiError(null);
+    setIsAnalyzing(true);
+
+    try {
+      const diagnosis = await aiDiagnoseTicket(token, summary);
+      setTitle(diagnosis.title);
+      setCategoryId(diagnosis.categoryId);
+      setPriorityId(diagnosis.priorityId);
+    } catch (err) {
+      setAiError(err instanceof ApiError ? err.message : "Impossible d'analyser la description pour le moment.");
+    } finally {
+      setIsAnalyzing(false);
     }
   }
 
@@ -155,6 +181,24 @@ export default function NewTicketPage() {
                     placeholder="Décrivez le problème, ce que vous avez déjà essayé..."
                     rows={4}
                   />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAnalyze}
+                    disabled={isAnalyzing || summary.trim().length < 10}
+                  >
+                    {isAnalyzing ? "Analyse en cours..." : "Analyser avec l'IA"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Suggère automatiquement un titre, une catégorie et une priorité à partir de votre
+                    description. Vous pourrez toujours les modifier avant d&apos;envoyer.
+                  </p>
+                  {aiError ? (
+                    <Alert variant="destructive">
+                      <AlertDescription>{aiError}</AlertDescription>
+                    </Alert>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">

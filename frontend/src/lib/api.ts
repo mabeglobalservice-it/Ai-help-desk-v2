@@ -214,6 +214,21 @@ export function createTicket(token: string, input: CreateTicketInput): Promise<T
   });
 }
 
+export interface TicketDiagnosis {
+  title: string;
+  categoryId: string;
+  categoryName: string;
+  priorityId: string;
+  priorityName: string;
+}
+
+export function aiDiagnoseTicket(token: string, description: string): Promise<TicketDiagnosis> {
+  return apiFetch<TicketDiagnosis>("/tickets/ai-diagnose", token, {
+    method: "POST",
+    body: JSON.stringify({ description }),
+  });
+}
+
 export interface TicketComment {
   id: string;
   content: string;
