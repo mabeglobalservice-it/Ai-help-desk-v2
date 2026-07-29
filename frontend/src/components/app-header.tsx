@@ -1,11 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { clearSession } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { Button } from "@/components/ui/button";
 import { NotificationsBell } from "@/components/notifications-bell";
+
+const DASHBOARD_ROLES = new Set(["SUPERVISOR", "ADMIN"]);
 
 interface AppHeaderProps {
   title: string;
@@ -30,6 +33,11 @@ export function AppHeader({ title, action }: AppHeaderProps) {
         </div>
         <div className="flex items-center gap-4">
           {action}
+          {user && DASHBOARD_ROLES.has(user.role) ? (
+            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/dashboard" />}>
+              Tableau de bord
+            </Button>
+          ) : null}
           {user ? <NotificationsBell /> : null}
           {user ? (
             <span className="text-sm text-muted-foreground">

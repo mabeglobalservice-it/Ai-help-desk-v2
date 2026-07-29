@@ -242,3 +242,15 @@ export function getNotifications(token: string): Promise<Notification[]> {
 export function markNotificationAsRead(token: string, id: string): Promise<Notification> {
   return apiFetch<Notification>(`/notifications/${id}/read`, token, { method: "PATCH" });
 }
+
+export interface DashboardStats {
+  totalOpen: number;
+  totalResolved: number;
+  averageResolutionHours: number | null;
+  byCategory: { categoryId: string; categoryName: string; count: number }[];
+  byTechnician: { technicianId: string; technicianName: string; count: number }[];
+}
+
+export function getDashboardStats(token: string): Promise<DashboardStats> {
+  return apiFetch<DashboardStats>("/dashboard/stats", token);
+}
