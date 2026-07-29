@@ -17,4 +17,12 @@ export class FindTicketsQueryDto {
   @IsOptional()
   @IsUUID()
   priorityId?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Filtre sur le technicien assigné',
+  })
+  @IsOptional()
+  @IsUUID()
+  technicianId?: string;
 }

@@ -63,6 +63,7 @@ export class TicketsService {
         status: query.status,
         categoryId: query.categoryId,
         priorityId: query.priorityId,
+        technicianId: query.technicianId,
       },
       include: TICKET_INCLUDE,
       orderBy: { createdAt: 'desc' },

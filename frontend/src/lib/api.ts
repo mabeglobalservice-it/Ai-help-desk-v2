@@ -89,6 +89,7 @@ export interface TicketsFilter {
   status?: TicketStatus;
   categoryId?: string;
   priorityId?: string;
+  technicianId?: string;
 }
 
 export function getTickets(token: string, filter: TicketsFilter = {}): Promise<Ticket[]> {
@@ -96,6 +97,7 @@ export function getTickets(token: string, filter: TicketsFilter = {}): Promise<T
   if (filter.status) params.set("status", filter.status);
   if (filter.categoryId) params.set("categoryId", filter.categoryId);
   if (filter.priorityId) params.set("priorityId", filter.priorityId);
+  if (filter.technicianId) params.set("technicianId", filter.technicianId);
   const query = params.toString();
   return apiFetch<Ticket[]>(`/tickets${query ? `?${query}` : ""}`, token);
 }

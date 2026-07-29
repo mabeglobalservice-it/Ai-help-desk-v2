@@ -60,7 +60,7 @@ export class TicketsController {
   @ApiOperation({
     summary: 'Lister tous les tickets',
     description:
-      'Filtrable par statut, catégorie et priorité (status/categoryId/priorityId)',
+      'Filtrable par statut, catégorie, priorité et technicien assigné (status/categoryId/priorityId/technicianId)',
   })
   @Get()
   findAll(@Query() query: FindTicketsQueryDto) {
