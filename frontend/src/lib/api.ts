@@ -1,3 +1,5 @@
+import { clearSession, getRefreshToken, updateTokens } from "./session";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
 export class ApiError extends Error {
@@ -20,15 +22,73 @@ async function parseErrorMessage(response: Response): Promise<string> {
   return "Une erreur est survenue.";
 }
 
+// Concurrent 401s share a single in-flight refresh instead of each rotating
+// the refresh token independently (which would invalidate one another).
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessTokenSilently(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(`${API_URL}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!response.ok) {
+        // the refresh token itself is dead: no point keeping stale tokens around
+        clearSession();
+        return null;
+      }
+
+      const data = (await response.json()) as { accessToken: string; refreshToken: string };
+      updateTokens(data.accessToken, data.refreshToken);
+      return data.accessToken;
+    } catch {
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+// Shared by every authenticated fetch (JSON, upload, download): on a 401,
+// attempts one silent token refresh and retries the request once with the
+// new access token. Falls back to the original 401 response if refreshing
+// fails, letting the caller's existing "clear session, go to /login" handling
+// take over.
+async function fetchWithAuthRetry(path: string, token: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...init?.headers },
+  });
+
+  if (response.status !== 401) return response;
+
+  const newToken = await refreshAccessTokenSilently();
+  if (!newToken) return response;
+
+  return fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${newToken}`, ...init?.headers },
+  });
+}
+
 async function apiFetch<T>(
   path: string,
   token: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetchWithAuthRetry(path, token, {
     ...init,
     headers: {
-      Authorization: `Bearer ${token}`,
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...init?.headers,
     },
@@ -52,6 +112,7 @@ export interface SessionUser {
 
 export interface LoginResponse {
   accessToken: string;
+  refreshToken: string;
   user: SessionUser;
 }
 
@@ -67,6 +128,20 @@ export async function login(email: string, password: string): Promise<LoginRespo
   }
 
   return response.json();
+}
+
+// Revokes the given refresh token server-side. Best-effort: callers should
+// clear the local session regardless of whether this succeeds.
+export async function logout(token: string, refreshToken: string): Promise<void> {
+  const response = await fetch(`${API_URL}/auth/logout`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken }),
+  });
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorMessage(response));
+  }
 }
 
 export type TicketStatus = "NEW" | "IN_PROGRESS" | "RESOLVED" | "ESCALATED";
@@ -358,9 +433,8 @@ export async function uploadAttachment(
   // Deliberately not using apiFetch: it always sets Content-Type: application/json
   // when a body is present, which would strip the multipart boundary the browser
   // sets automatically for FormData.
-  const response = await fetch(`${API_URL}/tickets/${ticketId}/attachments`, {
+  const response = await fetchWithAuthRetry(`/tickets/${ticketId}/attachments`, token, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
 
@@ -376,9 +450,10 @@ export async function downloadAttachment(
   ticketId: string,
   attachmentId: string,
 ): Promise<Blob> {
-  const response = await fetch(`${API_URL}/tickets/${ticketId}/attachments/${attachmentId}/download`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const response = await fetchWithAuthRetry(
+    `/tickets/${ticketId}/attachments/${attachmentId}/download`,
+    token,
+  );
 
   if (!response.ok) {
     throw new ApiError(response.status, await parseErrorMessage(response));

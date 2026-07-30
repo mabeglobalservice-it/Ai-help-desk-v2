@@ -25,8 +25,8 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      const { accessToken, user } = await login(email, password);
-      saveSession(accessToken, user);
+      const { accessToken, refreshToken, user } = await login(email, password);
+      saveSession(accessToken, refreshToken, user);
       router.push("/tickets");
     } catch (err) {
       setError(
