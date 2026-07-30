@@ -504,3 +504,27 @@ export function getDashboardStats(
   const query = params.toString();
   return apiFetch<DashboardStats>(`/dashboard/stats${query ? `?${query}` : ""}`, token);
 }
+
+export type DashboardExportFormat = "csv" | "pdf";
+
+export async function exportDashboardReport(
+  token: string,
+  format: DashboardExportFormat,
+  filter: DashboardStatsFilter = {},
+): Promise<{ blob: Blob; filename: string }> {
+  const params = new URLSearchParams({ format });
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+
+  const response = await fetchWithAuthRetry(`/dashboard/export?${params.toString()}`, token);
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorMessage(response));
+  }
+
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const filenameMatch = /filename="([^"]+)"/.exec(disposition);
+  const filename = filenameMatch?.[1] ?? `rapport-tickets.${format}`;
+
+  return { blob: await response.blob(), filename };
+}

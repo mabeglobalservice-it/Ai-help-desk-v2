@@ -11,7 +11,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ApiError, getDashboardStats, type DashboardStats } from "@/lib/api";
+import {
+  ApiError,
+  exportDashboardReport,
+  getDashboardStats,
+  type DashboardExportFormat,
+  type DashboardStats,
+} from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { AppHeader } from "@/components/app-header";
@@ -36,6 +42,8 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<DashboardExportFormat | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -64,6 +72,36 @@ export default function DashboardPage() {
   function resetDateFilter() {
     setFromDate("");
     setToDate("");
+  }
+
+  async function handleExport(format: DashboardExportFormat) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setExportError(null);
+    setExportingFormat(format);
+
+    try {
+      const { blob, filename } = await exportDashboardReport(token, format, {
+        from: fromDate || undefined,
+        to: toDate || undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError("Impossible d'exporter le rapport pour le moment.");
+    } finally {
+      setExportingFormat(null);
+    }
   }
 
   if (user && !DASHBOARD_ROLES.has(user.role)) {
@@ -114,7 +152,34 @@ export default function DashboardPage() {
               Réinitialiser
             </Button>
           ) : null}
+
+          {stats ? (
+            <div className="ml-auto flex items-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleExport("csv")}
+                disabled={exportingFormat !== null}
+              >
+                {exportingFormat === "csv" ? "Export..." : "Exporter en CSV"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleExport("pdf")}
+                disabled={exportingFormat !== null}
+              >
+                {exportingFormat === "pdf" ? "Export..." : "Exporter en PDF"}
+              </Button>
+            </div>
+          ) : null}
         </div>
+
+        {exportError ? (
+          <Alert variant="destructive" className="mb-6">
+            <AlertDescription>{exportError}</AlertDescription>
+          </Alert>
+        ) : null}
 
         {error ? (
           <Alert variant="destructive">

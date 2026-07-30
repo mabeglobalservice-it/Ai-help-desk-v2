@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import PDFDocument from 'pdfkit';
 import { PrismaService } from '../prisma/prisma.service';
 import { SlaService } from '../sla/sla.service';
 import { TicketStatus } from '../../generated/prisma/client';
 import { DashboardStatsQueryDto } from './dto/dashboard-stats-query.dto';
+import type { DashboardExportFormat } from './dto/export-dashboard-query.dto';
 
 const OPEN_STATUSES = [
   TicketStatus.NEW,
@@ -12,6 +14,29 @@ const OPEN_STATUSES = [
 
 interface DateRangeWhere {
   createdAt: { gte?: Date; lte?: Date };
+}
+
+export interface DashboardStatsResult {
+  totalOpen: number;
+  totalResolved: number;
+  averageResolutionHours: number | null;
+  byCategory: { categoryId: string; categoryName: string; count: number }[];
+  byTechnician: {
+    technicianId: string;
+    technicianName: string;
+    count: number;
+  }[];
+}
+
+interface DashboardExport {
+  filename: string;
+  contentType: string;
+  body: string | Buffer;
+}
+
+function csvEscape(value: string | number): string {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 @Injectable()
@@ -52,6 +77,37 @@ export class DashboardService {
       this.logger.error('Failed to run SLA breach check', error);
     }
 
+    return this.computeStats(query);
+  }
+
+  // docs/02-brd.md BR-11 / doc 12 §4.5: export du rapport affiché sur le
+  // tableau de bord, aux memes filtres de dates. N'a pas besoin de
+  // redeclencher la verification SLA (deja best-effort ailleurs).
+  async exportReport(
+    query: DashboardStatsQueryDto,
+    format: DashboardExportFormat,
+  ): Promise<DashboardExport> {
+    const stats = await this.computeStats(query);
+    const dateSuffix = new Date().toISOString().slice(0, 10);
+
+    if (format === 'csv') {
+      return {
+        filename: `rapport-tickets-${dateSuffix}.csv`,
+        contentType: 'text/csv; charset=utf-8',
+        body: this.toCsv(stats),
+      };
+    }
+
+    return {
+      filename: `rapport-tickets-${dateSuffix}.pdf`,
+      contentType: 'application/pdf',
+      body: await this.toPdf(stats, query),
+    };
+  }
+
+  private async computeStats(
+    query: DashboardStatsQueryDto,
+  ): Promise<DashboardStatsResult> {
     const dateWhere = this.buildDateRangeWhere(query);
 
     const [
@@ -139,5 +195,92 @@ export class DashboardService {
       byCategory,
       byTechnician,
     };
+  }
+
+  private toCsv(stats: DashboardStatsResult): string {
+    const lines: string[] = [];
+
+    lines.push('Indicateur,Valeur');
+    lines.push(`Tickets ouverts,${stats.totalOpen}`);
+    lines.push(`Tickets résolus,${stats.totalResolved}`);
+    lines.push(
+      `Temps moyen de résolution (h),${stats.averageResolutionHours !== null ? stats.averageResolutionHours.toFixed(2) : ''}`,
+    );
+    lines.push('');
+
+    lines.push('Catégorie,Nombre de tickets');
+    for (const entry of stats.byCategory) {
+      lines.push(`${csvEscape(entry.categoryName)},${entry.count}`);
+    }
+    lines.push('');
+
+    lines.push('Technicien,Nombre de tickets');
+    for (const entry of stats.byTechnician) {
+      lines.push(`${csvEscape(entry.technicianName)},${entry.count}`);
+    }
+
+    return lines.join('\r\n');
+  }
+
+  private async toPdf(
+    stats: DashboardStatsResult,
+    range: DashboardStatsQueryDto,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(18).text('Rapport de tickets — AI Help Desk');
+      doc.moveDown(0.3);
+      const rangeLabel =
+        range.from || range.to
+          ? `Période : ${range.from ?? '…'} au ${range.to ?? '…'}`
+          : 'Période : toutes les dates';
+      doc.fontSize(10).fillColor('#555555').text(rangeLabel);
+      doc.fillColor('#000000');
+      doc.moveDown(1.2);
+
+      doc.fontSize(13).text('Indicateurs clés');
+      doc.moveDown(0.3);
+      doc.fontSize(11);
+      doc.text(`Tickets ouverts : ${stats.totalOpen}`);
+      doc.text(`Tickets résolus : ${stats.totalResolved}`);
+      doc.text(
+        `Temps moyen de résolution : ${
+          stats.averageResolutionHours !== null
+            ? `${stats.averageResolutionHours.toFixed(1)} h`
+            : '—'
+        }`,
+      );
+      doc.moveDown(1);
+
+      doc.fontSize(13).text('Répartition par catégorie');
+      doc.moveDown(0.3);
+      doc.fontSize(11);
+      if (stats.byCategory.length === 0) {
+        doc.text('Aucun ticket.');
+      } else {
+        for (const entry of stats.byCategory) {
+          doc.text(`${entry.categoryName} — ${entry.count}`);
+        }
+      }
+      doc.moveDown(1);
+
+      doc.fontSize(13).text('Répartition par technicien');
+      doc.moveDown(0.3);
+      doc.fontSize(11);
+      if (stats.byTechnician.length === 0) {
+        doc.text('Aucun ticket assigné.');
+      } else {
+        for (const entry of stats.byTechnician) {
+          doc.text(`${entry.technicianName} — ${entry.count}`);
+        }
+      }
+
+      doc.end();
+    });
   }
 }
