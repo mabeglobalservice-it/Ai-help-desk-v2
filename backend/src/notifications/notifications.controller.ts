@@ -11,7 +11,9 @@ import { NotificationsService } from './notifications.service';
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
-  @ApiOperation({ summary: "Lister les notifications de l'utilisateur courant" })
+  @ApiOperation({
+    summary: "Lister les notifications de l'utilisateur courant",
+  })
   @Get()
   findAll(@Req() req: Request) {
     const requester = req.user as { userId: string };

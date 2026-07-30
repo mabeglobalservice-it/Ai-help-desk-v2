@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { NotificationType } from '../../generated/prisma/client';
 
 interface CreateNotificationInput {
@@ -15,10 +16,19 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
+  // docs/11-documentation-api.md §13: notification.new diffuse en temps
+  // reel au destinataire, en plus de l'email et de la persistance en base.
   async create(input: CreateNotificationInput) {
     const notification = await this.prisma.notification.create({ data: input });
+
+    this.realtimeGateway.emitToUser(
+      input.recipientId,
+      'notification.new',
+      notification,
+    );
 
     const recipient = await this.prisma.user.findUnique({
       where: { id: input.recipientId },

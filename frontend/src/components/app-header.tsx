@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { logout } from "@/lib/api";
 import { clearSession, getRefreshToken, getToken } from "@/lib/session";
+import { disconnectSocket } from "@/lib/socket";
 import { useSessionUser } from "@/lib/use-session-user";
 import { Button } from "@/components/ui/button";
 import { NotificationsBell } from "@/components/notifications-bell";
@@ -30,6 +31,7 @@ export function AppHeader({ title, action }: AppHeaderProps) {
         // best-effort: the local session is cleared regardless
       }
     }
+    disconnectSocket();
     clearSession();
     router.replace("/login");
   }

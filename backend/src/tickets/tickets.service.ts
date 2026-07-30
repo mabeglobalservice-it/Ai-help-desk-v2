@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   NotificationType,
   Role,
@@ -53,6 +54,7 @@ export class TicketsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
   private async generateReference(): Promise<string> {
@@ -74,7 +76,7 @@ export class TicketsService {
       ? new Date(Date.now() + slaPolicy.resolutionHours * 60 * 60 * 1000)
       : null;
 
-    return this.prisma.ticket.create({
+    const ticket = await this.prisma.ticket.create({
       data: {
         reference,
         employeeId: dto.employeeId,
@@ -88,6 +90,14 @@ export class TicketsService {
       },
       include: TICKET_INCLUDE,
     });
+
+    // docs/11-documentation-api.md §13: ticket.created diffuse aux
+    // superviseurs/admins (aucun technicien n'est encore concerne tant
+    // qu'aucune assignation n'a eu lieu).
+    this.realtimeGateway.emitToRole(Role.SUPERVISOR, 'ticket.created', ticket);
+    this.realtimeGateway.emitToRole(Role.ADMIN, 'ticket.created', ticket);
+
+    return ticket;
   }
 
   // docs/06-cas-utilisation.md RM-04: un employe ne voit que ses propres
@@ -278,6 +288,12 @@ export class TicketsService {
       !!dto.technicianId && dto.technicianId !== existing.technicianId;
 
     if (isNewAssignment) {
+      this.realtimeGateway.emitToUser(
+        dto.technicianId as string,
+        'ticket.assigned',
+        updated,
+      );
+
       try {
         await this.notificationsService.create({
           recipientId: dto.technicianId as string,
@@ -292,6 +308,7 @@ export class TicketsService {
     }
 
     if (isStatusChange) {
+      this.emitStatusChanged(updated, changedById);
       await this.notifyOnStatusChange(
         updated,
         existing.status,
@@ -301,6 +318,28 @@ export class TicketsService {
     }
 
     return updated;
+  }
+
+  // docs/11-documentation-api.md §13: ticket.statusChanged, meme public
+  // cible que la notification persistee (proprietaire + technicien,
+  // excluant l'auteur du changement qui a deja sa propre vue a jour).
+  private emitStatusChanged(
+    ticket: { id: string; employeeId: string; technicianId: string | null },
+    changedById: string,
+  ) {
+    const recipientIds = new Set<string>();
+    if (ticket.employeeId !== changedById) recipientIds.add(ticket.employeeId);
+    if (ticket.technicianId && ticket.technicianId !== changedById) {
+      recipientIds.add(ticket.technicianId);
+    }
+
+    for (const recipientId of recipientIds) {
+      this.realtimeGateway.emitToUser(
+        recipientId,
+        'ticket.statusChanged',
+        ticket,
+      );
+    }
   }
 
   // Notifies the ticket owner and the assigned technician, excluding whoever made the change

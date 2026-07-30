@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   NotificationType,
   Role,
@@ -14,6 +15,7 @@ export class SlaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly realtimeGateway: RealtimeGateway,
   ) {}
 
   // Finds tickets whose SLA deadline has passed without being resolved and
@@ -115,6 +117,14 @@ export class SlaService {
 
     const recipientIds = new Set<string>([ticket.employeeId]);
     if (ticket.technicianId) recipientIds.add(ticket.technicianId);
+
+    for (const recipientId of recipientIds) {
+      this.realtimeGateway.emitToUser(recipientId, 'ticket.statusChanged', {
+        id: ticket.id,
+        reference: ticket.reference,
+        status: TicketStatus.ESCALATED,
+      });
+    }
 
     await Promise.all(
       [...recipientIds].map((recipientId) =>

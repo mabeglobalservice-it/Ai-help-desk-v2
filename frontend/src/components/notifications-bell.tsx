@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Bell } from "lucide-react";
 import { getNotifications, markNotificationAsRead, type Notification } from "@/lib/api";
 import { getToken } from "@/lib/session";
+import { useRealtimeEvent } from "@/lib/use-realtime-event";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -38,9 +39,14 @@ export function NotificationsBell() {
 
   useEffect(() => {
     refresh();
+    // Fallback safety net: the socket below already refreshes instantly on
+    // notification.new, but this keeps the badge accurate even through a
+    // dropped/reconnecting connection.
     const interval = setInterval(refresh, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [refresh]);
+
+  useRealtimeEvent("notification.new", refresh);
 
   async function handleSelect(notification: Notification) {
     if (!notification.isRead) {

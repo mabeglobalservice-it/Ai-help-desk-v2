@@ -25,6 +25,7 @@ import {
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { useRealtimeEvent } from "@/lib/use-realtime-event";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
 import { formatFileSize } from "@/lib/format";
 import { AppHeader } from "@/components/app-header";
@@ -194,6 +195,19 @@ export default function TicketDetailPage() {
     const ticketData = await getTicket(token, params.id);
     setTicket(ticketData);
   }
+
+  // docs/11-documentation-api.md §13: refetch en temps reel quand CE ticket
+  // change de statut ou d'assignation (ex. depuis un autre onglet/appareil).
+  useRealtimeEvent<{ id: string }>("ticket.statusChanged", (payload) => {
+    if (payload.id !== params.id) return;
+    const token = getToken();
+    if (token) refreshTicket(token);
+  });
+  useRealtimeEvent<{ id: string }>("ticket.assigned", (payload) => {
+    if (payload.id !== params.id) return;
+    const token = getToken();
+    if (token) refreshTicket(token);
+  });
 
   async function handleStatusChange(newStatus: TicketStatus) {
     const token = getToken();

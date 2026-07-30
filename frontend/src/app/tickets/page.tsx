@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { useRealtimeEvent } from "@/lib/use-realtime-event";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
 import { AppHeader } from "@/components/app-header";
 import { SlaBadge } from "@/components/sla-badge";
@@ -73,7 +74,7 @@ export default function TicketsPage() {
       });
   }, []);
 
-  useEffect(() => {
+  const fetchTickets = useCallback(() => {
     const token = getToken();
     if (!token) {
       router.replace("/login");
@@ -98,6 +99,17 @@ export default function TicketsPage() {
         setError("Impossible de charger les tickets pour le moment.");
       });
   }, [router, statusFilter, categoryFilter, priorityFilter]);
+
+  useEffect(() => {
+    fetchTickets();
+  }, [fetchTickets]);
+
+  // docs/11-documentation-api.md §13: la liste se rafraichit en temps reel
+  // a la creation d'un ticket ou a tout changement de statut/assignation,
+  // sans que l'utilisateur ait besoin de recharger la page.
+  useRealtimeEvent("ticket.created", fetchTickets);
+  useRealtimeEvent("ticket.statusChanged", fetchTickets);
+  useRealtimeEvent("ticket.assigned", fetchTickets);
 
   function resetFilters() {
     setStatusFilter(ALL);

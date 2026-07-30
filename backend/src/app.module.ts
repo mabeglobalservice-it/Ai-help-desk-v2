@@ -10,6 +10,7 @@ import { CommentsModule } from './comments/comments.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { RealtimeModule } from './realtime/realtime.module';
 import { TeamsModule } from './teams/teams.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { UsersModule } from './users/users.module';
@@ -28,6 +29,7 @@ import { UsersModule } from './users/users.module';
     DashboardModule,
     TeamsModule,
     AuditLogModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [AppService],
