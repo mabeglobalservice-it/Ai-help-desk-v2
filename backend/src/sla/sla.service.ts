@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -26,6 +27,12 @@ export class SlaService {
   // ticket that is still NEW (never taken in charge) when it breaches its
   // SLA is auto-escalated to ESCALATED. Tickets already IN_PROGRESS or
   // ESCALATED only get the breach notification, not a second escalation.
+  //
+  // Runs on a real schedule rather than only when a supervisor happens to
+  // load the dashboard (docs/dashboard.service.ts also calls this on load
+  // for an immediate check, but that's no longer the only trigger — a
+  // breach is now detected within 5 minutes even if nobody opens the app).
+  @Cron(CronExpression.EVERY_5_MINUTES)
   async checkAndNotifyBreaches(): Promise<void> {
     const breachedTickets = await this.prisma.ticket.findMany({
       where: {
