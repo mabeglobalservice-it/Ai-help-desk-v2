@@ -9,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -20,7 +21,11 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // docs/11-documentation-api.md §14: rate limiting en priorite sur /auth/*
+  // — surtout ici, seule route non authentifiee et devinable par bruteforce
+  // (email + mot de passe).
   @ApiOperation({ summary: "S'authentifier avec email et mot de passe" })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('login')
   login(@Body() loginDto: LoginDto) {
@@ -35,9 +40,13 @@ export class AuthController {
     return req.user;
   }
 
+  // Refresh tokens are high-entropy (unguessable by brute force), so this
+  // is a moderate cap against abuse rather than a strict anti-bruteforce
+  // limit like login's.
   @ApiOperation({
     summary: "Émet un nouveau JWT à partir d'un refresh token valide",
   })
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
   refresh(@Body() dto: RefreshTokenDto) {

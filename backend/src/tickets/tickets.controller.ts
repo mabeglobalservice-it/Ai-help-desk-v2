@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -44,12 +45,16 @@ export class TicketsController {
     return this.ticketsService.create(createTicketDto);
   }
 
+  // docs/11-documentation-api.md §14: rate limiting en priorite sur
+  // /diagnostics (cout IA) — ici /tickets/ai-diagnose, chaque appel declenche
+  // une requete a l'API Anthropic.
   @ApiOperation({
     summary: 'Analyse une description en langage naturel via IA',
     description:
       'Suggère un titre, une catégorie et une priorité pour aider à préremplir le formulaire de création. Réservé au rôle EMPLOYEE',
   })
   @Roles(Role.EMPLOYEE)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('ai-diagnose')
   aiDiagnose(@Body() dto: AiDiagnoseDto) {
     return this.aiService.diagnoseTicket(dto.description);

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AttachmentsModule } from './attachments/attachments.module';
@@ -20,6 +22,11 @@ import { UsersModule } from './users/users.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    // docs/11-documentation-api.md §14: rate limiting, en priorité sur
+    // /auth/* et /tickets/ai-diagnose (cout IA) — voir les overrides
+    // @Throttle sur ces routes. Cette config globale sert de filet de
+    // securite par defaut pour toutes les autres routes.
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
     PrismaModule,
     TicketsModule,
     AuthModule,
@@ -34,6 +41,6 @@ import { UsersModule } from './users/users.module';
     RealtimeModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}
