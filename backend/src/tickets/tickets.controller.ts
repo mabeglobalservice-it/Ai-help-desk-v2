@@ -41,8 +41,9 @@ export class TicketsController {
   })
   @Roles(Role.EMPLOYEE)
   @Post()
-  create(@Body() createTicketDto: CreateTicketDto) {
-    return this.ticketsService.create(createTicketDto);
+  create(@Body() createTicketDto: CreateTicketDto, @Req() req: Request) {
+    const requester = req.user as { userId: string };
+    return this.ticketsService.create(createTicketDto, requester.userId);
   }
 
   // docs/11-documentation-api.md §14: rate limiting en priorite sur

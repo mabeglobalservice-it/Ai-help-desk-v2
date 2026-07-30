@@ -2,13 +2,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateTicketDto {
-  @ApiProperty({
-    format: 'uuid',
-    description: "ID de l'employé à l'origine du ticket",
-  })
-  @IsUUID()
-  employeeId: string;
-
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   categoryId: string;

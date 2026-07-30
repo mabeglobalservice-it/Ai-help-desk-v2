@@ -64,7 +64,10 @@ export class TicketsService {
     return `TCK-${year}-${sequence}`;
   }
 
-  async create(dto: CreateTicketDto) {
+  // employeeId comes from the authenticated requester (req.user), never from
+  // the request body — otherwise any EMPLOYEE could create a ticket in
+  // someone else's name.
+  async create(dto: CreateTicketDto, employeeId: string) {
     const [reference, slaPolicy] = await Promise.all([
       this.generateReference(),
       this.prisma.slaPolicy.findUnique({
@@ -79,7 +82,7 @@ export class TicketsService {
     const ticket = await this.prisma.ticket.create({
       data: {
         reference,
-        employeeId: dto.employeeId,
+        employeeId,
         categoryId: dto.categoryId,
         priorityId: dto.priorityId,
         title: dto.title,
