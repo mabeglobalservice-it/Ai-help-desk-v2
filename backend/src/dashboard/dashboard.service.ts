@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SlaService } from '../sla/sla.service';
 import { TicketStatus } from '../../generated/prisma/client';
 import { DashboardStatsQueryDto } from './dto/dashboard-stats-query.dto';
 
@@ -15,7 +16,12 @@ interface DateRangeWhere {
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DashboardService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly slaService: SlaService,
+  ) {}
 
   // `to` is inclusive of the whole day, so it's bumped to 23:59:59.999
   private buildDateRangeWhere({
@@ -36,6 +42,16 @@ export class DashboardService {
   }
 
   async getStats(query: DashboardStatsQueryDto) {
+    try {
+      // Triggered on dashboard load rather than on a fixed schedule: simple,
+      // and a supervisor/admin opening the dashboard is exactly the moment
+      // this needs to be surfaced.
+      await this.slaService.checkAndNotifyBreaches();
+    } catch (error) {
+      // best-effort: an SLA-check failure shouldn't break the dashboard
+      this.logger.error('Failed to run SLA breach check', error);
+    }
+
     const dateWhere = this.buildDateRangeWhere(query);
 
     const [

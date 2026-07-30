@@ -8,6 +8,7 @@ const SUBJECT_BY_TYPE: Record<NotificationType, string> = {
   TICKET_ASSIGNED: 'Ticket assigné',
   NEW_COMMENT: 'Nouveau commentaire',
   STATUS_CHANGED: 'Statut modifié',
+  SLA_BREACHED: 'SLA dépassé',
 };
 
 interface SendNotificationEmailInput {

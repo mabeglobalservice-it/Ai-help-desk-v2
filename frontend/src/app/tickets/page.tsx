@@ -17,6 +17,7 @@ import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
 import { AppHeader } from "@/components/app-header";
+import { SlaBadge } from "@/components/sla-badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -246,6 +247,7 @@ export default function TicketsPage() {
                   <TableHead>Catégorie</TableHead>
                   <TableHead>Priorité</TableHead>
                   <TableHead>Statut</TableHead>
+                  <TableHead>SLA</TableHead>
                   <TableHead>Employé</TableHead>
                   <TableHead>Créé le</TableHead>
                 </TableRow>
@@ -280,6 +282,9 @@ export default function TicketsPage() {
                         <span className={`size-1.5 rounded-full ${STATUS_DISPLAY[ticket.status].dot}`} />
                         {STATUS_DISPLAY[ticket.status].label}
                       </span>
+                    </TableCell>
+                    <TableCell>
+                      <SlaBadge slaDueAt={ticket.slaDueAt} createdAt={ticket.createdAt} status={ticket.status} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">{ticket.employee.displayName}</TableCell>
                     <TableCell className="text-muted-foreground">

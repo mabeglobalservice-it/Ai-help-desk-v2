@@ -28,6 +28,7 @@ import { useSessionUser } from "@/lib/use-session-user";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
 import { formatFileSize } from "@/lib/format";
 import { AppHeader } from "@/components/app-header";
+import { SlaBadge } from "@/components/sla-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -403,7 +404,10 @@ export default function TicketDetailPage() {
             <Card>
               <CardHeader>
                 <div className="flex items-start justify-between gap-4">
-                  <CardTitle className="text-xl">{ticket.title}</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-xl">{ticket.title}</CardTitle>
+                    <SlaBadge slaDueAt={ticket.slaDueAt} createdAt={ticket.createdAt} status={ticket.status} />
+                  </div>
                   {canChangeStatus ? (
                     <Select
                       value={ticket.status}
@@ -538,6 +542,13 @@ export default function TicketDetailPage() {
                   <Field label="Résolu le">
                     {ticket.resolvedAt ? (
                       dateFormatter.format(new Date(ticket.resolvedAt))
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </Field>
+                  <Field label="Échéance SLA">
+                    {ticket.slaDueAt ? (
+                      dateFormatter.format(new Date(ticket.slaDueAt))
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}

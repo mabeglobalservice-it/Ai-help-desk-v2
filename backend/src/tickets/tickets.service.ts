@@ -58,9 +58,20 @@ export class TicketsService {
   }
 
   async create(dto: CreateTicketDto) {
+    const [reference, slaPolicy] = await Promise.all([
+      this.generateReference(),
+      this.prisma.slaPolicy.findUnique({
+        where: { priorityId: dto.priorityId },
+      }),
+    ]);
+
+    const slaDueAt = slaPolicy
+      ? new Date(Date.now() + slaPolicy.resolutionHours * 60 * 60 * 1000)
+      : null;
+
     return this.prisma.ticket.create({
       data: {
-        reference: await this.generateReference(),
+        reference,
         employeeId: dto.employeeId,
         categoryId: dto.categoryId,
         priorityId: dto.priorityId,
@@ -68,6 +79,7 @@ export class TicketsService {
         summary: dto.summary,
         technicianId: dto.technicianId,
         ciId: dto.ciId,
+        slaDueAt,
       },
       include: TICKET_INCLUDE,
     });

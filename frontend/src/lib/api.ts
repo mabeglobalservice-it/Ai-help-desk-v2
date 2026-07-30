@@ -79,6 +79,7 @@ export interface Ticket {
   status: TicketStatus;
   createdAt: string;
   resolvedAt: string | null;
+  slaDueAt: string | null;
   rating: number | null;
   ratingComment: string | null;
   ratedAt: string | null;
@@ -344,7 +345,7 @@ export async function downloadAttachment(
   return response.blob();
 }
 
-export type NotificationType = "TICKET_ASSIGNED" | "NEW_COMMENT" | "STATUS_CHANGED";
+export type NotificationType = "TICKET_ASSIGNED" | "NEW_COMMENT" | "STATUS_CHANGED" | "SLA_BREACHED";
 
 export interface Notification {
   id: string;

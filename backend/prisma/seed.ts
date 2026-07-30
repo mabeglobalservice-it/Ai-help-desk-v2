@@ -10,9 +10,9 @@ const categories = ['Réseau', 'Matériel', 'Logiciel', 'Accès'];
 
 // Priorities: cf. docs/docs/06-cas-utilisation.md, section "Gérer les SLA"
 const priorities = [
-  { name: 'Faible', level: 1 },
-  { name: 'Moyenne', level: 2 },
-  { name: 'Urgente', level: 3 },
+  { name: 'Faible', level: 1, slaResolutionHours: 72 },
+  { name: 'Moyenne', level: 2, slaResolutionHours: 24 },
+  { name: 'Urgente', level: 3, slaResolutionHours: 4 },
 ];
 
 async function main() {
@@ -25,10 +25,19 @@ async function main() {
   }
 
   for (const priority of priorities) {
-    await prisma.priority.upsert({
+    const created = await prisma.priority.upsert({
       where: { name: priority.name },
       update: {},
-      create: priority,
+      create: { name: priority.name, level: priority.level },
+    });
+
+    await prisma.slaPolicy.upsert({
+      where: { priorityId: created.id },
+      update: { resolutionHours: priority.slaResolutionHours },
+      create: {
+        priorityId: created.id,
+        resolutionHours: priority.slaResolutionHours,
+      },
     });
   }
 }

@@ -76,26 +76,27 @@ model Location {
 }
 
 model Ticket {
-  id            String         @id @default(uuid())
-  reference     String         @unique
-  employeeId    String         @map("employee_id")
-  employee      User           @relation("EmployeeTickets", fields: [employeeId], references: [id])
-  technicianId  String?        @map("technician_id")
-  technician    User?          @relation("TechnicianTickets", fields: [technicianId], references: [id])
-  categoryId    String         @map("category_id")
-  category      TicketCategory @relation(fields: [categoryId], references: [id])
-  priorityId    String         @map("priority_id")
-  priority      Priority       @relation(fields: [priorityId], references: [id])
-  ciId          String?        @map("ci_id")
-  title         String
-  summary       String?
-  status        TicketStatus   @default(NEW)
-  slaDueAt      DateTime?      @map("sla_due_at")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  resolvedAt    DateTime?      @map("resolved_at")
-  rating        Int?
-  ratingComment String?        @map("rating_comment")
-  ratedAt       DateTime?      @map("rated_at")
+  id                  String         @id @default(uuid())
+  reference           String         @unique
+  employeeId          String         @map("employee_id")
+  employee            User           @relation("EmployeeTickets", fields: [employeeId], references: [id])
+  technicianId        String?        @map("technician_id")
+  technician          User?          @relation("TechnicianTickets", fields: [technicianId], references: [id])
+  categoryId          String         @map("category_id")
+  category            TicketCategory @relation(fields: [categoryId], references: [id])
+  priorityId          String         @map("priority_id")
+  priority            Priority       @relation(fields: [priorityId], references: [id])
+  ciId                String?        @map("ci_id")
+  title               String
+  summary             String?
+  status              TicketStatus   @default(NEW)
+  slaDueAt            DateTime?      @map("sla_due_at")
+  slaBreachNotifiedAt DateTime?      @map("sla_breach_notified_at")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  resolvedAt          DateTime?      @map("resolved_at")
+  rating              Int?
+  ratingComment       String?        @map("rating_comment")
+  ratedAt             DateTime?      @map("rated_at")
 
   statusHistory TicketStatusHistory[]
   comments      TicketComment[]
@@ -125,6 +126,7 @@ enum NotificationType {
   TICKET_ASSIGNED
   NEW_COMMENT
   STATUS_CHANGED
+  SLA_BREACHED
 }
 
 model TicketComment {
@@ -180,9 +182,20 @@ model Priority {
   level     Int      @unique
   createdAt DateTime @default(now()) @map("created_at")
 
-  tickets Ticket[]
+  tickets   Ticket[]
+  slaPolicy SlaPolicy?
 
   @@map("priorities")
+}
+
+model SlaPolicy {
+  id              String   @id @default(uuid())
+  priorityId      String   @unique @map("priority_id")
+  priority        Priority @relation(fields: [priorityId], references: [id])
+  resolutionHours Int      @map("resolution_hours")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("sla_policies")
 }
 
 model TicketStatusHistory {
