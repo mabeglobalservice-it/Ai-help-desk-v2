@@ -45,6 +45,7 @@ export default function NewTicketPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiDegraded, setAiDegraded] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   useEffect(() => {
@@ -104,6 +105,7 @@ export default function NewTicketPage() {
     }
 
     setAiError(null);
+    setAiDegraded(false);
     setIsAnalyzing(true);
 
     try {
@@ -111,6 +113,7 @@ export default function NewTicketPage() {
       setTitle(diagnosis.title);
       setCategoryId(diagnosis.categoryId);
       setPriorityId(diagnosis.priorityId);
+      setAiDegraded(diagnosis.degraded);
     } catch (err) {
       setAiError(err instanceof ApiError ? err.message : "Impossible d'analyser la description pour le moment.");
     } finally {
@@ -197,6 +200,14 @@ export default function NewTicketPage() {
                   {aiError ? (
                     <Alert variant="destructive">
                       <AlertDescription>{aiError}</AlertDescription>
+                    </Alert>
+                  ) : null}
+                  {aiDegraded ? (
+                    <Alert>
+                      <AlertDescription>
+                        L&apos;IA n&apos;est pas disponible pour le moment : suggestion générée en mode
+                        dégradé à partir de mots-clés. Vérifiez les valeurs avant d&apos;envoyer.
+                      </AlertDescription>
                     </Alert>
                   ) : null}
                 </div>

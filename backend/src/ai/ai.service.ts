@@ -27,6 +27,125 @@ export interface TicketDiagnosis {
   categoryName: string;
   priorityId: string;
   priorityName: string;
+  // RM-05: true when this suggestion came from the local keyword fallback
+  // rather than the AI provider (which was unavailable or failed)
+  degraded: boolean;
+}
+
+interface CategoryOption {
+  id: string;
+  name: string;
+}
+
+interface PriorityOption {
+  id: string;
+  name: string;
+  level: number;
+}
+
+// docs/06-cas-utilisation.md RM-05: keyword synonyms for the local fallback
+// diagnosis used when the AI provider is unavailable, keyed by normalized
+// (lowercased, accent-stripped) category name — degrades sensibly even if
+// the seeded catalog differs from this project's default four categories.
+const CATEGORY_KEYWORDS: Record<string, string[]> = {
+  reseau: [
+    'reseau',
+    'wifi',
+    'wi-fi',
+    'internet',
+    'vpn',
+    'ethernet',
+    'debit',
+    'latence',
+    'ping',
+    'connexion internet',
+  ],
+  materiel: [
+    'ordinateur',
+    ' pc ',
+    'ecran',
+    'clavier',
+    'souris',
+    'imprimante',
+    'portable',
+    'laptop',
+    'batterie',
+    'chargeur',
+    'casque',
+    'webcam',
+    'disque dur',
+    'materiel',
+    "ne s'allume plus",
+    'ne demarre plus',
+  ],
+  logiciel: [
+    'logiciel',
+    'application',
+    'programme',
+    'erreur',
+    'bug',
+    'plantage',
+    'crash',
+    'mise a jour',
+    'installation',
+    'licence',
+    'office',
+    'excel',
+    'word',
+    'outlook',
+    'windows',
+    'freeze',
+    'ecran bleu',
+  ],
+  acces: [
+    'mot de passe',
+    'password',
+    'compte',
+    'acces',
+    'verrouille',
+    'bloque',
+    'authentification',
+    'identifiant',
+    'login',
+    'droits',
+    'permission',
+    'mfa',
+    '2fa',
+  ],
+};
+
+const URGENT_KEYWORDS = [
+  'urgent',
+  'urgence',
+  'bloque',
+  'bloquee',
+  'critique',
+  'panne totale',
+  'plus personne',
+  'production',
+  'immediat',
+  'grave',
+  'tout le monde',
+];
+
+const LOW_KEYWORDS = [
+  'quand vous pouvez',
+  'pas presse',
+  'pas urgent',
+  'mineur',
+  'suggestion',
+  'amelioration',
+];
+
+function normalize(text: string): string {
+  return text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function countMatches(haystack: string, keywords: string[]): number {
+  return keywords.reduce(
+    (count, keyword) => (haystack.includes(keyword) ? count + 1 : count),
+    0,
+  );
 }
 
 @Injectable()
@@ -38,13 +157,12 @@ export class AiService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // docs/06-cas-utilisation.md RM-05: le systeme doit rester fonctionnel en
+  // mode degrade si l'agent IA est indisponible. Si la cle API est absente,
+  // ou si l'appel echoue pour n'importe quelle raison, on retombe sur un
+  // diagnostic local par mots-cles plutot que de faire echouer la creation
+  // de ticket.
   async diagnoseTicket(description: string): Promise<TicketDiagnosis> {
-    if (!this.client) {
-      throw new ServiceUnavailableException(
-        "L'analyse IA n'est pas configurée pour le moment.",
-      );
-    }
-
     const [categories, priorities] = await Promise.all([
       this.prisma.ticketCategory.findMany({ select: { id: true, name: true } }),
       this.prisma.priority.findMany({
@@ -59,6 +177,35 @@ export class AiService {
       );
     }
 
+    if (!this.client) {
+      this.logger.warn(
+        'Clé API Anthropic absente : diagnostic en mode dégradé (mots-clés locaux)',
+      );
+      return this.localDiagnose(description, categories, priorities);
+    }
+
+    try {
+      return await this.aiDiagnose(
+        this.client,
+        description,
+        categories,
+        priorities,
+      );
+    } catch (error) {
+      this.logger.error(
+        "Échec de l'analyse IA, repli en mode dégradé (mots-clés locaux)",
+        error,
+      );
+      return this.localDiagnose(description, categories, priorities);
+    }
+  }
+
+  private async aiDiagnose(
+    client: Anthropic,
+    description: string,
+    categories: CategoryOption[],
+    priorities: PriorityOption[],
+  ): Promise<TicketDiagnosis> {
     const categoryList = categories
       .map((category) => `- ${category.id}: ${category.name}`)
       .join('\n');
@@ -69,80 +216,143 @@ export class AiService {
       )
       .join('\n');
 
-    try {
-      const response = await this.client.messages.create({
-        model: MODEL,
-        max_tokens: 512,
-        system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            content:
-              `Description du problème :\n"""\n${description}\n"""\n\n` +
-              `Catégories disponibles :\n${categoryList}\n\n` +
-              `Priorités disponibles :\n${priorityList}`,
-          },
-        ],
-        tools: [
-          {
-            name: 'suggest_ticket_details',
-            description:
-              'Suggère un titre, une catégorie et une priorité pour ce ticket',
-            input_schema: {
-              type: 'object',
-              properties: {
-                title: {
-                  type: 'string',
-                  description:
-                    'Titre concis et clair du ticket (moins de 80 caractères)',
-                },
-                categoryId: {
-                  type: 'string',
-                  enum: categories.map((category) => category.id),
-                  description: "L'identifiant de la catégorie choisie",
-                },
-                priorityId: {
-                  type: 'string',
-                  enum: priorities.map((priority) => priority.id),
-                  description: "L'identifiant de la priorité choisie",
-                },
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 512,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Description du problème :\n"""\n${description}\n"""\n\n` +
+            `Catégories disponibles :\n${categoryList}\n\n` +
+            `Priorités disponibles :\n${priorityList}`,
+        },
+      ],
+      tools: [
+        {
+          name: 'suggest_ticket_details',
+          description:
+            'Suggère un titre, une catégorie et une priorité pour ce ticket',
+          input_schema: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                description:
+                  'Titre concis et clair du ticket (moins de 80 caractères)',
               },
-              required: ['title', 'categoryId', 'priorityId'],
+              categoryId: {
+                type: 'string',
+                enum: categories.map((category) => category.id),
+                description: "L'identifiant de la catégorie choisie",
+              },
+              priorityId: {
+                type: 'string',
+                enum: priorities.map((priority) => priority.id),
+                description: "L'identifiant de la priorité choisie",
+              },
             },
+            required: ['title', 'categoryId', 'priorityId'],
           },
-        ],
-        tool_choice: { type: 'tool', name: 'suggest_ticket_details' },
-      });
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'suggest_ticket_details' },
+    });
 
-      const toolUse = response.content.find(
-        (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
-      );
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+    );
 
-      if (!toolUse) {
-        throw new Error(
-          "Réponse de l'IA inattendue : aucune suggestion structurée reçue",
-        );
-      }
-
-      const suggestion = toolUse.input as DiagnoseSuggestion;
-
-      const category =
-        categories.find((c) => c.id === suggestion.categoryId) ?? categories[0];
-      const priority =
-        priorities.find((p) => p.id === suggestion.priorityId) ?? priorities[0];
-
-      return {
-        title: suggestion.title?.trim() || description.slice(0, 80),
-        categoryId: category.id,
-        categoryName: category.name,
-        priorityId: priority.id,
-        priorityName: priority.name,
-      };
-    } catch (error) {
-      this.logger.error("Échec de l'analyse IA", error);
-      throw new ServiceUnavailableException(
-        "Impossible d'analyser la description pour le moment.",
+    if (!toolUse) {
+      throw new Error(
+        "Réponse de l'IA inattendue : aucune suggestion structurée reçue",
       );
     }
+
+    const suggestion = toolUse.input as DiagnoseSuggestion;
+
+    const category =
+      categories.find((c) => c.id === suggestion.categoryId) ?? categories[0];
+    const priority =
+      priorities.find((p) => p.id === suggestion.priorityId) ?? priorities[0];
+
+    return {
+      title: suggestion.title?.trim() || description.slice(0, 80),
+      categoryId: category.id,
+      categoryName: category.name,
+      priorityId: priority.id,
+      priorityName: priority.name,
+      degraded: false,
+    };
+  }
+
+  private localDiagnose(
+    description: string,
+    categories: CategoryOption[],
+    priorities: PriorityOption[],
+  ): TicketDiagnosis {
+    const normalizedDescription = normalize(description);
+
+    const category = this.pickCategory(normalizedDescription, categories);
+    const priority = this.pickPriority(normalizedDescription, priorities);
+
+    return {
+      title: this.deriveTitle(description),
+      categoryId: category.id,
+      categoryName: category.name,
+      priorityId: priority.id,
+      priorityName: priority.name,
+      degraded: true,
+    };
+  }
+
+  private pickCategory(
+    normalizedDescription: string,
+    categories: CategoryOption[],
+  ): CategoryOption {
+    let best = categories[0];
+    let bestScore = -1;
+
+    for (const category of categories) {
+      const normalizedName = normalize(category.name);
+      const synonyms = CATEGORY_KEYWORDS[normalizedName] ?? [];
+      const score =
+        countMatches(normalizedDescription, synonyms) +
+        (normalizedDescription.includes(normalizedName) ? 1 : 0);
+      if (score > bestScore) {
+        best = category;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  private pickPriority(
+    normalizedDescription: string,
+    priorities: PriorityOption[],
+  ): PriorityOption {
+    const sorted = [...priorities].sort((a, b) => a.level - b.level);
+
+    // LOW_KEYWORDS is checked first: its phrases are negations like "pas
+    // urgent" that would otherwise also match the bare "urgent" substring
+    // in URGENT_KEYWORDS and incorrectly win.
+    if (countMatches(normalizedDescription, LOW_KEYWORDS) > 0) {
+      return sorted[0];
+    }
+    if (countMatches(normalizedDescription, URGENT_KEYWORDS) > 0) {
+      return sorted[sorted.length - 1];
+    }
+    return sorted[Math.floor(sorted.length / 2)];
+  }
+
+  private deriveTitle(description: string): string {
+    const trimmed = description.trim();
+    if (!trimmed) return 'Nouvelle demande';
+
+    const firstSentence = trimmed.split(/(?<=[.!?])\s/)[0];
+    const base = firstSentence.length > 5 ? firstSentence : trimmed;
+    return base.length > 80 ? `${base.slice(0, 77)}...` : base;
   }
 }

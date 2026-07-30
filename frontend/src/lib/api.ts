@@ -251,6 +251,7 @@ export interface TicketDiagnosis {
   categoryName: string;
   priorityId: string;
   priorityName: string;
+  degraded: boolean;
 }
 
 export function aiDiagnoseTicket(token: string, description: string): Promise<TicketDiagnosis> {
