@@ -528,3 +528,35 @@ export async function exportDashboardReport(
 
   return { blob: await response.blob(), filename };
 }
+
+export type ActorType = "USER" | "AI_AGENT" | "SYSTEM";
+
+export interface AuditLogEntry {
+  id: string;
+  actorId: string | null;
+  actorType: ActorType;
+  action: string;
+  targetType: string;
+  targetId: string;
+  ipAddress: string | null;
+  beforeState: Record<string, unknown> | null;
+  afterState: Record<string, unknown> | null;
+  reason: string | null;
+  createdAt: string;
+  actor: { id: string; displayName: string; email: string } | null;
+}
+
+export interface AuditLogFilter {
+  targetType?: string;
+  from?: string;
+  to?: string;
+}
+
+export function getAuditLogs(token: string, filter: AuditLogFilter = {}): Promise<AuditLogEntry[]> {
+  const params = new URLSearchParams();
+  if (filter.targetType) params.set("targetType", filter.targetType);
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  const query = params.toString();
+  return apiFetch<AuditLogEntry[]>(`/audit-logs${query ? `?${query}` : ""}`, token);
+}

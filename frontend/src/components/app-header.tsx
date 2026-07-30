@@ -58,6 +58,11 @@ export function AppHeader({ title, action }: AppHeaderProps) {
               Utilisateurs
             </Button>
           ) : null}
+          {user && user.role === "ADMIN" ? (
+            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/admin/audit-logs" />}>
+              Journal d&apos;audit
+            </Button>
+          ) : null}
           {user ? <NotificationsBell /> : null}
           {user ? (
             <span className="text-sm text-muted-foreground">

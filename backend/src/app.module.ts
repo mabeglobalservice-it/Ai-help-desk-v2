@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AttachmentsModule } from './attachments/attachments.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
 import { AuthModule } from './auth/auth.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CommentsModule } from './comments/comments.module';
@@ -26,6 +27,7 @@ import { UsersModule } from './users/users.module';
     NotificationsModule,
     DashboardModule,
     TeamsModule,
+    AuditLogModule,
   ],
   controllers: [AppController],
   providers: [AppService],

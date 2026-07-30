@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { Prisma } from '../../generated/prisma/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -25,13 +26,31 @@ const USER_SELECT = {
   createdAt: true,
 } as const;
 
+// docs/06-cas-utilisation.md UC-031: seuls ces champs sont "administratifs"
+// (role, rattachement) — email/displayName ne sont pas du ressort de la
+// journalisation d'audit au meme titre.
+function adminSnapshot(user: {
+  role: string;
+  isActive: boolean;
+  departmentId: string | null;
+  teamId: string | null;
+}) {
+  return {
+    role: user.role,
+    isActive: user.isActive,
+    departmentId: user.departmentId,
+    teamId: user.teamId,
+  };
+}
+
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
-  async create(dto: CreateUserDto) {
-    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
-
+  private async createUserRecord(dto: CreateUserDto, passwordHash: string) {
     try {
       return await this.prisma.user.create({
         data: {
@@ -57,33 +76,11 @@ export class UsersService {
     }
   }
 
-  async findAll() {
-    return this.prisma.user.findMany({
-      select: USER_SELECT,
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  async findOne(id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-      select: USER_SELECT,
-    });
-
-    if (!user) {
-      throw new NotFoundException(`Utilisateur ${id} introuvable`);
-    }
-
-    return user;
-  }
-
-  async update(id: string, dto: UpdateUserDto) {
-    await this.findOne(id);
-
-    const passwordHash = dto.password
-      ? await bcrypt.hash(dto.password, SALT_ROUNDS)
-      : undefined;
-
+  private async updateUserRecord(
+    id: string,
+    dto: UpdateUserDto,
+    passwordHash: string | undefined,
+  ) {
     try {
       return await this.prisma.user.update({
         where: { id },
@@ -109,5 +106,65 @@ export class UsersService {
       }
       throw error;
     }
+  }
+
+  async create(dto: CreateUserDto, actorId: string) {
+    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const user = await this.createUserRecord(dto, passwordHash);
+
+    await this.auditLogService.record({
+      actorId,
+      action: 'USER_CREATED',
+      targetType: 'User',
+      targetId: user.id,
+      afterState: {
+        email: user.email,
+        displayName: user.displayName,
+        ...adminSnapshot(user),
+      },
+    });
+
+    return user;
+  }
+
+  async findAll() {
+    return this.prisma.user.findMany({
+      select: USER_SELECT,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findOne(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: USER_SELECT,
+    });
+
+    if (!user) {
+      throw new NotFoundException(`Utilisateur ${id} introuvable`);
+    }
+
+    return user;
+  }
+
+  async update(id: string, dto: UpdateUserDto, actorId: string) {
+    const before = await this.findOne(id);
+
+    const passwordHash = dto.password
+      ? await bcrypt.hash(dto.password, SALT_ROUNDS)
+      : undefined;
+
+    const updated = await this.updateUserRecord(id, dto, passwordHash);
+
+    await this.auditLogService.record({
+      actorId,
+      action: 'USER_UPDATED',
+      targetType: 'User',
+      targetId: id,
+      beforeState: adminSnapshot(before),
+      afterState: adminSnapshot(updated),
+    });
+
+    return updated;
   }
 }

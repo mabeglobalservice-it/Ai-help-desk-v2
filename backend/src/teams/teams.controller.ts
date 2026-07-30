@@ -5,9 +5,11 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -39,8 +41,9 @@ export class TeamsController {
   })
   @Roles(Role.SUPERVISOR, Role.ADMIN)
   @Post()
-  create(@Body() dto: CreateTeamDto) {
-    return this.teamsService.create(dto);
+  create(@Body() dto: CreateTeamDto, @Req() req: Request) {
+    const requester = req.user as { userId: string };
+    return this.teamsService.create(dto, requester.userId);
   }
 
   @ApiOperation({
@@ -49,7 +52,12 @@ export class TeamsController {
   })
   @Roles(Role.SUPERVISOR, Role.ADMIN)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateTeamDto) {
-    return this.teamsService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateTeamDto,
+    @Req() req: Request,
+  ) {
+    const requester = req.user as { userId: string };
+    return this.teamsService.update(id, dto, requester.userId);
   }
 }
