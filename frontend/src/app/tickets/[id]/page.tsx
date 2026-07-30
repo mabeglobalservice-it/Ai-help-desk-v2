@@ -746,7 +746,9 @@ export default function TicketDetailPage() {
                           {" → "}
                           {STATUS_DISPLAY[entry.toStatus].label}
                           {" par "}
-                          <span className="font-medium">{entry.changedBy.displayName}</span>
+                          <span className="font-medium">
+                            {entry.changedBy ? entry.changedBy.displayName : "Système (SLA dépassé)"}
+                          </span>
                         </span>
                         <span className="block text-xs text-muted-foreground">
                           le {dateFormatter.format(new Date(entry.changedAt))}

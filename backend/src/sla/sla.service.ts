@@ -19,6 +19,11 @@ export class SlaService {
   // Finds tickets whose SLA deadline has passed without being resolved and
   // haven't been notified yet, notifies every active SUPERVISOR/ADMIN once
   // per ticket, then marks it as notified so it's never sent twice.
+  //
+  // docs/06-cas-utilisation.md UC-020 / docs/05-user-stories.md US-16: a
+  // ticket that is still NEW (never taken in charge) when it breaches its
+  // SLA is auto-escalated to ESCALATED. Tickets already IN_PROGRESS or
+  // ESCALATED only get the breach notification, not a second escalation.
   async checkAndNotifyBreaches(): Promise<void> {
     const breachedTickets = await this.prisma.ticket.findMany({
       where: {
@@ -26,7 +31,13 @@ export class SlaService {
         slaBreachNotifiedAt: null,
         status: { not: TicketStatus.RESOLVED },
       },
-      select: { id: true, reference: true },
+      select: {
+        id: true,
+        reference: true,
+        status: true,
+        employeeId: true,
+        technicianId: true,
+      },
     });
 
     if (breachedTickets.length === 0) return;
@@ -37,13 +48,31 @@ export class SlaService {
     });
 
     for (const ticket of breachedTickets) {
+      const shouldEscalate = ticket.status === TicketStatus.NEW;
+
+      // Escalation is done independently of the notification below (best
+      // effort, immediate): it's the more important state change, and
+      // shouldn't be held back by an email/notification hiccup.
+      if (shouldEscalate) {
+        try {
+          await this.escalateTicket(ticket);
+        } catch (error) {
+          this.logger.error(
+            `Failed to auto-escalate ticket ${ticket.id}`,
+            error,
+          );
+        }
+      }
+
       try {
         await Promise.all(
           recipients.map((recipient) =>
             this.notificationsService.create({
               recipientId: recipient.id,
               type: NotificationType.SLA_BREACHED,
-              message: `Le ticket ${ticket.reference} a dépassé son délai de résolution (SLA)`,
+              message: shouldEscalate
+                ? `Le ticket ${ticket.reference} a dépassé son délai de résolution (SLA) et a été escaladé automatiquement (non pris en charge)`
+                : `Le ticket ${ticket.reference} a dépassé son délai de résolution (SLA)`,
               ticketId: ticket.id,
             }),
           ),
@@ -61,5 +90,41 @@ export class SlaService {
         );
       }
     }
+  }
+
+  private async escalateTicket(ticket: {
+    id: string;
+    reference: string;
+    employeeId: string;
+    technicianId: string | null;
+  }) {
+    await this.prisma.$transaction([
+      this.prisma.ticket.update({
+        where: { id: ticket.id },
+        data: { status: TicketStatus.ESCALATED },
+      }),
+      this.prisma.ticketStatusHistory.create({
+        data: {
+          ticketId: ticket.id,
+          fromStatus: TicketStatus.NEW,
+          toStatus: TicketStatus.ESCALATED,
+          changedById: null,
+        },
+      }),
+    ]);
+
+    const recipientIds = new Set<string>([ticket.employeeId]);
+    if (ticket.technicianId) recipientIds.add(ticket.technicianId);
+
+    await Promise.all(
+      [...recipientIds].map((recipientId) =>
+        this.notificationsService.create({
+          recipientId,
+          type: NotificationType.STATUS_CHANGED,
+          message: `Le ticket ${ticket.reference} a été escaladé automatiquement (délai SLA dépassé sans prise en charge)`,
+          ticketId: ticket.id,
+        }),
+      ),
+    );
   }
 }

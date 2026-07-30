@@ -204,8 +204,10 @@ model TicketStatusHistory {
   ticket      Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   fromStatus  TicketStatus? @map("from_status")
   toStatus    TicketStatus  @map("to_status")
-  changedById String        @map("changed_by")
-  changedBy   User          @relation(fields: [changedById], references: [id])
+  // null = transition triggered automatically by the system (e.g. SLA breach
+  // auto-escalation), not by a human actor
+  changedById String?       @map("changed_by")
+  changedBy   User?         @relation(fields: [changedById], references: [id])
   changedAt   DateTime      @default(now()) @map("changed_at")
 
   @@index([ticketId, changedAt])

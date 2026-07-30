@@ -110,7 +110,7 @@ export interface TicketStatusHistoryEntry {
   id: string;
   fromStatus: TicketStatus | null;
   toStatus: TicketStatus;
-  changedBy: { id: string; displayName: string; email: string };
+  changedBy: { id: string; displayName: string; email: string } | null;
   changedAt: string;
 }
 
