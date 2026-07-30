@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../../generated/prisma/client';
@@ -41,8 +45,13 @@ export class UsersService {
         select: USER_SELECT,
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('Un utilisateur avec cet email existe déjà');
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Un utilisateur avec cet email existe déjà',
+        );
       }
       throw error;
     }
@@ -71,7 +80,9 @@ export class UsersService {
   async update(id: string, dto: UpdateUserDto) {
     await this.findOne(id);
 
-    const passwordHash = dto.password ? await bcrypt.hash(dto.password, SALT_ROUNDS) : undefined;
+    const passwordHash = dto.password
+      ? await bcrypt.hash(dto.password, SALT_ROUNDS)
+      : undefined;
 
     try {
       return await this.prisma.user.update({
@@ -88,8 +99,13 @@ export class UsersService {
         select: USER_SELECT,
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('Un utilisateur avec cet email existe déjà');
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Un utilisateur avec cet email existe déjà',
+        );
       }
       throw error;
     }

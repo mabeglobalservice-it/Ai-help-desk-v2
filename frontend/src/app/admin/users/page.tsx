@@ -6,11 +6,13 @@ import {
   ApiError,
   createUser,
   getDepartments,
+  getTeams,
   getUsers,
   updateUser,
   type AdminUser,
   type Department,
   type Role,
+  type Team,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
@@ -45,6 +47,7 @@ const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Admin",
 };
 const NO_DEPARTMENT = "NONE";
+const NO_TEAM = "NONE";
 
 const dateFormatter = new Intl.DateTimeFormat("fr-CA", {
   dateStyle: "medium",
@@ -56,6 +59,7 @@ export default function AdminUsersPage() {
 
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
 
@@ -64,6 +68,7 @@ export default function AdminUsersPage() {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<Role>("EMPLOYEE");
   const [departmentId, setDepartmentId] = useState(NO_DEPARTMENT);
+  const [teamId, setTeamId] = useState(NO_TEAM);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -101,6 +106,11 @@ export default function AdminUsersPage() {
       .catch(() => {
         // best-effort: department dropdown just stays empty
       });
+    getTeams(token)
+      .then(setTeams)
+      .catch(() => {
+        // best-effort: team dropdown just stays empty
+      });
   }, [router, user, loadUsers]);
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -120,12 +130,14 @@ export default function AdminUsersPage() {
         displayName,
         role,
         departmentId: departmentId === NO_DEPARTMENT ? undefined : departmentId,
+        teamId: teamId === NO_TEAM ? undefined : teamId,
       });
       setDisplayName("");
       setEmail("");
       setPassword("");
       setRole("EMPLOYEE");
       setDepartmentId(NO_DEPARTMENT);
+      setTeamId(NO_TEAM);
       await loadUsers(token);
     } catch (err) {
       setCreateError(
@@ -148,6 +160,21 @@ export default function AdminUsersPage() {
       await loadUsers(token);
     } catch (err) {
       setRowError(err instanceof ApiError ? err.message : "Impossible de modifier le rôle pour le moment.");
+    }
+  }
+
+  async function handleTeamChange(targetUser: AdminUser, newTeamId: string) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setRowError(null);
+    try {
+      await updateUser(token, targetUser.id, { teamId: newTeamId === NO_TEAM ? null : newTeamId });
+      await loadUsers(token);
+    } catch (err) {
+      setRowError(err instanceof ApiError ? err.message : "Impossible de modifier l'équipe pour le moment.");
     }
   }
 
@@ -275,6 +302,28 @@ export default function AdminUsersPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor="new-user-team">Équipe</Label>
+                  <Select value={teamId} onValueChange={(value) => setTeamId(value ?? NO_TEAM)}>
+                    <SelectTrigger id="new-user-team" className="w-full">
+                      <SelectValue placeholder="Aucune équipe">
+                        {(value: string | null) =>
+                          value && value !== NO_TEAM
+                            ? (teams.find((team) => team.id === value)?.name ?? "Aucune équipe")
+                            : "Aucune équipe"
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_TEAM}>Aucune équipe</SelectItem>
+                      {teams.map((team) => (
+                        <SelectItem key={team.id} value={team.id}>
+                          {team.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="sm:col-span-2">
                   <Button type="submit" disabled={isSubmitting}>
                     {isSubmitting ? "Création..." : "Créer l'utilisateur"}
@@ -309,6 +358,7 @@ export default function AdminUsersPage() {
                         <TableHead>Email</TableHead>
                         <TableHead>Rôle</TableHead>
                         <TableHead>Département</TableHead>
+                        <TableHead>Équipe</TableHead>
                         <TableHead>Statut</TableHead>
                         <TableHead>Créé le</TableHead>
                         <TableHead />
@@ -340,6 +390,30 @@ export default function AdminUsersPage() {
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {rowUser.department?.name ?? "—"}
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              value={rowUser.teamId ?? NO_TEAM}
+                              onValueChange={(value) => value && handleTeamChange(rowUser, value)}
+                            >
+                              <SelectTrigger className="w-40">
+                                <SelectValue placeholder="Aucune équipe">
+                                  {(value: string | null) =>
+                                    value && value !== NO_TEAM
+                                      ? (teams.find((team) => team.id === value)?.name ?? "Aucune équipe")
+                                      : "Aucune équipe"
+                                  }
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_TEAM}>Aucune équipe</SelectItem>
+                                {teams.map((team) => (
+                                  <SelectItem key={team.id} value={team.id}>
+                                    {team.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </TableCell>
                           <TableCell>
                             <Badge variant={rowUser.isActive ? "secondary" : "destructive"}>

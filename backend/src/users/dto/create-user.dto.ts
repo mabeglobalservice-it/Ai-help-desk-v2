@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MinLength,
+} from 'class-validator';
 import { Role } from '../../../generated/prisma/client';
 
 export class CreateUserDto {
@@ -7,7 +15,10 @@ export class CreateUserDto {
   @IsEmail()
   email: string;
 
-  @ApiProperty({ minLength: 8, description: 'Sera hashé avec bcrypt avant stockage' })
+  @ApiProperty({
+    minLength: 8,
+    description: 'Sera hashé avec bcrypt avant stockage',
+  })
   @IsString()
   @MinLength(8)
   password: string;

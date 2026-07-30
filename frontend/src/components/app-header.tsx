@@ -38,6 +38,11 @@ export function AppHeader({ title, action }: AppHeaderProps) {
               Tableau de bord
             </Button>
           ) : null}
+          {user && DASHBOARD_ROLES.has(user.role) ? (
+            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/admin/teams" />}>
+              Équipes
+            </Button>
+          ) : null}
           {user && user.role === "ADMIN" ? (
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/admin/users" />}>
               Utilisateurs

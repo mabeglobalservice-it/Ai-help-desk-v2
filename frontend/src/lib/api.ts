@@ -174,6 +174,43 @@ export function getDepartments(token: string): Promise<Department[]> {
   return apiFetch<Department[]>("/departments", token);
 }
 
+export interface Team {
+  id: string;
+  name: string;
+  categoryId: string | null;
+  category: TicketCategory | null;
+  createdAt: string;
+  _count: { members: number };
+}
+
+export function getTeams(token: string): Promise<Team[]> {
+  return apiFetch<Team[]>("/teams", token);
+}
+
+export interface CreateTeamInput {
+  name: string;
+  categoryId?: string;
+}
+
+export function createTeam(token: string, input: CreateTeamInput): Promise<Team> {
+  return apiFetch<Team>("/teams", token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface UpdateTeamInput {
+  name?: string;
+  categoryId?: string | null;
+}
+
+export function updateTeam(token: string, id: string, input: UpdateTeamInput): Promise<Team> {
+  return apiFetch<Team>(`/teams/${id}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export interface AdminUser {
   id: string;
   email: string;
@@ -181,6 +218,8 @@ export interface AdminUser {
   role: Role;
   departmentId: string | null;
   department: Department | null;
+  teamId: string | null;
+  team: Team | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -195,6 +234,7 @@ export interface CreateUserInput {
   displayName: string;
   role: Role;
   departmentId?: string;
+  teamId?: string;
 }
 
 export function createUser(token: string, input: CreateUserInput): Promise<AdminUser> {
@@ -208,6 +248,7 @@ export interface UpdateUserInput {
   role?: Role;
   isActive?: boolean;
   departmentId?: string;
+  teamId?: string | null;
 }
 
 export function updateUser(token: string, id: string, input: UpdateUserInput): Promise<AdminUser> {

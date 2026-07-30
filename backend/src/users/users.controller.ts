@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -15,28 +23,40 @@ import { UpdateUserDto } from './dto/update-user.dto';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @ApiOperation({ summary: 'Créer un utilisateur', description: 'Réservé au rôle ADMIN' })
+  @ApiOperation({
+    summary: 'Créer un utilisateur',
+    description: 'Réservé au rôle ADMIN',
+  })
   @Roles(Role.ADMIN)
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
   }
 
-  @ApiOperation({ summary: 'Lister tous les utilisateurs', description: 'Réservé aux rôles SUPERVISOR, ADMIN' })
+  @ApiOperation({
+    summary: 'Lister tous les utilisateurs',
+    description: 'Réservé aux rôles SUPERVISOR, ADMIN',
+  })
   @Roles(Role.SUPERVISOR, Role.ADMIN)
   @Get()
   findAll() {
     return this.usersService.findAll();
   }
 
-  @ApiOperation({ summary: 'Récupérer un utilisateur par ID', description: 'Réservé aux rôles SUPERVISOR, ADMIN' })
+  @ApiOperation({
+    summary: 'Récupérer un utilisateur par ID',
+    description: 'Réservé aux rôles SUPERVISOR, ADMIN',
+  })
   @Roles(Role.SUPERVISOR, Role.ADMIN)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.usersService.findOne(id);
   }
 
-  @ApiOperation({ summary: 'Mettre à jour un utilisateur', description: 'Réservé au rôle ADMIN' })
+  @ApiOperation({
+    summary: 'Mettre à jour un utilisateur',
+    description: 'Réservé au rôle ADMIN',
+  })
   @Roles(Role.ADMIN)
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
