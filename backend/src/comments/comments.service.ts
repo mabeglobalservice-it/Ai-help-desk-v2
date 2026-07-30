@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType, Role } from '../../generated/prisma/client';
@@ -24,7 +28,9 @@ export class CommentsService {
   ) {}
 
   private async findTicketOrThrow(ticketId: string) {
-    const ticket = await this.prisma.ticket.findUnique({ where: { id: ticketId } });
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+    });
 
     if (!ticket) {
       throw new NotFoundException(`Ticket ${ticketId} introuvable`);
@@ -33,8 +39,26 @@ export class CommentsService {
     return ticket;
   }
 
-  async findAllForTicket(ticketId: string) {
-    await this.findTicketOrThrow(ticketId);
+  // RM-04: memes bornes de visibilite que le ticket lui-meme (voir
+  // TicketsService.assertTicketVisible) — sinon un employe ou technicien
+  // pourrait lire les commentaires d'un ticket auquel il n'a pas acces.
+  private canAccessTicket(
+    ticket: { employeeId: string; technicianId: string | null },
+    requester: Requester,
+  ) {
+    const isOwner = ticket.employeeId === requester.userId;
+    const isAssignedTechnician = ticket.technicianId === requester.userId;
+    const isPrivileged =
+      requester.role === Role.SUPERVISOR || requester.role === Role.ADMIN;
+    return isOwner || isAssignedTechnician || isPrivileged;
+  }
+
+  async findAllForTicket(ticketId: string, requester: Requester) {
+    const ticket = await this.findTicketOrThrow(ticketId);
+
+    if (!this.canAccessTicket(ticket, requester)) {
+      throw new ForbiddenException("Vous n'avez pas accès à ce ticket");
+    }
 
     return this.prisma.ticketComment.findMany({
       where: { ticketId },
@@ -48,12 +72,10 @@ export class CommentsService {
   async create(ticketId: string, requester: Requester, dto: CreateCommentDto) {
     const ticket = await this.findTicketOrThrow(ticketId);
 
-    const isOwner = ticket.employeeId === requester.userId;
-    const isAssignedTechnician = ticket.technicianId === requester.userId;
-    const isPrivileged = requester.role === Role.SUPERVISOR || requester.role === Role.ADMIN;
-
-    if (!isOwner && !isAssignedTechnician && !isPrivileged) {
-      throw new ForbiddenException("Vous n'êtes pas autorisé à commenter ce ticket");
+    if (!this.canAccessTicket(ticket, requester)) {
+      throw new ForbiddenException(
+        "Vous n'êtes pas autorisé à commenter ce ticket",
+      );
     }
 
     const comment = await this.prisma.ticketComment.create({
@@ -72,12 +94,18 @@ export class CommentsService {
 
   // Notifies the ticket owner and the assigned technician, excluding the comment's own author
   private async notifyOnNewComment(
-    ticket: { id: string; reference: string; employeeId: string; technicianId: string | null },
+    ticket: {
+      id: string;
+      reference: string;
+      employeeId: string;
+      technicianId: string | null;
+    },
     authorId: string,
   ) {
     const recipientIds = new Set<string>();
     if (ticket.employeeId !== authorId) recipientIds.add(ticket.employeeId);
-    if (ticket.technicianId && ticket.technicianId !== authorId) recipientIds.add(ticket.technicianId);
+    if (ticket.technicianId && ticket.technicianId !== authorId)
+      recipientIds.add(ticket.technicianId);
 
     try {
       await Promise.all(

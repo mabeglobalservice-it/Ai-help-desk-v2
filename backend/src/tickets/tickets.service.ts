@@ -43,6 +43,11 @@ const OPEN_STATUSES = [
   TicketStatus.ESCALATED,
 ];
 
+interface Requester {
+  userId: string;
+  role: Role;
+}
+
 @Injectable()
 export class TicketsService {
   constructor(
@@ -85,20 +90,32 @@ export class TicketsService {
     });
   }
 
-  async findAll(query: FindTicketsQueryDto) {
+  // docs/06-cas-utilisation.md RM-04: un employe ne voit que ses propres
+  // tickets, un technicien ne voit que ceux qui lui sont assignes, seuls
+  // superviseur/admin ont une vue sur l'ensemble des tickets.
+  async findAll(query: FindTicketsQueryDto, requester: Requester) {
     return this.prisma.ticket.findMany({
       where: {
         status: query.status,
         categoryId: query.categoryId,
         priorityId: query.priorityId,
-        technicianId: query.technicianId,
+        technicianId:
+          requester.role === Role.TECHNICIAN
+            ? requester.userId
+            : query.technicianId,
+        employeeId:
+          requester.role === Role.EMPLOYEE ? requester.userId : undefined,
       },
       include: TICKET_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  async findOne(id: string) {
+  // `requester` is only passed by callers that need RM-04 ownership
+  // enforcement (the GET/PATCH controller routes); internal lookups (e.g.
+  // suggestTechnician, rate's own explicit ownership check) omit it and get
+  // the ticket unconditionally.
+  async findOne(id: string, requester?: Requester) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id },
       include: {
@@ -114,7 +131,27 @@ export class TicketsService {
       throw new NotFoundException(`Ticket ${id} introuvable`);
     }
 
+    if (requester) this.assertTicketVisible(ticket, requester);
+
     return ticket;
+  }
+
+  private assertTicketVisible(
+    ticket: { employeeId: string; technicianId: string | null },
+    requester: Requester,
+  ) {
+    if (
+      requester.role === Role.EMPLOYEE &&
+      ticket.employeeId !== requester.userId
+    ) {
+      throw new ForbiddenException("Vous n'avez pas accès à ce ticket");
+    }
+    if (
+      requester.role === Role.TECHNICIAN &&
+      ticket.technicianId !== requester.userId
+    ) {
+      throw new ForbiddenException("Vous n'avez pas accès à ce ticket");
+    }
   }
 
   // Finds technicians in the team(s) matching the ticket's category, falling
@@ -191,8 +228,18 @@ export class TicketsService {
     });
   }
 
-  async update(id: string, dto: UpdateTicketDto, changedById: string) {
-    const existing = await this.findOne(id);
+  async update(
+    id: string,
+    dto: UpdateTicketDto,
+    changedById: string,
+    requesterRole: Role,
+  ) {
+    // RM-04: a technician may only modify tickets assigned to them;
+    // supervisor/admin bypass this check inside assertTicketVisible.
+    const existing = await this.findOne(id, {
+      userId: changedById,
+      role: requesterRole,
+    });
 
     const isResolved = dto.status === TicketStatus.RESOLVED;
     const isStatusChange = !!dto.status && dto.status !== existing.status;

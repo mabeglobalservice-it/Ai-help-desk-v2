@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,7 +26,9 @@ export class AttachmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   private async findTicketOrThrow(ticketId: string) {
-    const ticket = await this.prisma.ticket.findUnique({ where: { id: ticketId } });
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+    });
 
     if (!ticket) {
       throw new NotFoundException(`Ticket ${ticketId} introuvable`);
@@ -39,8 +45,27 @@ export class AttachmentsService {
     }
   }
 
-  async findAllForTicket(ticketId: string) {
-    await this.findTicketOrThrow(ticketId);
+  // RM-04: memes bornes de visibilite que le ticket lui-meme (voir
+  // TicketsService.assertTicketVisible) — sinon un employe ou technicien
+  // pourrait lister/telecharger les pieces jointes d'un ticket auquel il
+  // n'a pas acces.
+  private canAccessTicket(
+    ticket: { employeeId: string; technicianId: string | null },
+    requester: Requester,
+  ) {
+    const isOwner = ticket.employeeId === requester.userId;
+    const isAssignedTechnician = ticket.technicianId === requester.userId;
+    const isPrivileged =
+      requester.role === Role.SUPERVISOR || requester.role === Role.ADMIN;
+    return isOwner || isAssignedTechnician || isPrivileged;
+  }
+
+  async findAllForTicket(ticketId: string, requester: Requester) {
+    const ticket = await this.findTicketOrThrow(ticketId);
+
+    if (!this.canAccessTicket(ticket, requester)) {
+      throw new ForbiddenException("Vous n'avez pas accès à ce ticket");
+    }
 
     return this.prisma.ticketAttachment.findMany({
       where: { ticketId },
@@ -49,7 +74,17 @@ export class AttachmentsService {
     });
   }
 
-  async findOneOrThrow(ticketId: string, attachmentId: string) {
+  async findOneOrThrow(
+    ticketId: string,
+    attachmentId: string,
+    requester: Requester,
+  ) {
+    const ticket = await this.findTicketOrThrow(ticketId);
+
+    if (!this.canAccessTicket(ticket, requester)) {
+      throw new ForbiddenException("Vous n'avez pas accès à ce ticket");
+    }
+
     const attachment = await this.prisma.ticketAttachment.findUnique({
       where: { id: attachmentId },
       include: { uploadedBy: { select: UPLOADER_SELECT } },
@@ -64,21 +99,25 @@ export class AttachmentsService {
 
   // docs/11-documentation-api.md, module Tickets: POST /tickets/:id/attachments
   // reserve a l'employe proprietaire et au technicien assigne (meme regle que les commentaires)
-  async create(ticketId: string, requester: Requester, file: Express.Multer.File) {
-    const ticket = await this.prisma.ticket.findUnique({ where: { id: ticketId } });
+  async create(
+    ticketId: string,
+    requester: Requester,
+    file: Express.Multer.File,
+  ) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+    });
 
     if (!ticket) {
       await this.safeDelete(file.path);
       throw new NotFoundException(`Ticket ${ticketId} introuvable`);
     }
 
-    const isOwner = ticket.employeeId === requester.userId;
-    const isAssignedTechnician = ticket.technicianId === requester.userId;
-    const isPrivileged = requester.role === Role.SUPERVISOR || requester.role === Role.ADMIN;
-
-    if (!isOwner && !isAssignedTechnician && !isPrivileged) {
+    if (!this.canAccessTicket(ticket, requester)) {
       await this.safeDelete(file.path);
-      throw new ForbiddenException("Vous n'êtes pas autorisé à joindre un fichier à ce ticket");
+      throw new ForbiddenException(
+        "Vous n'êtes pas autorisé à joindre un fichier à ce ticket",
+      );
     }
 
     return this.prisma.ticketAttachment.create({

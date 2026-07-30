@@ -55,23 +55,28 @@ export class TicketsController {
     return this.aiService.diagnoseTicket(dto.description);
   }
 
-  // Listing/detail: any authenticated role for now (ownership-based
-  // filtering from the doc — employe proprietaire / technicien assigne —
-  // isn't implemented yet, so it isn't role-restrictable here)
+  // RM-04: un employe ne voit que ses propres tickets, un technicien ne voit
+  // que ceux qui lui sont assignes; superviseur/admin voient tout.
   @ApiOperation({
     summary: 'Lister tous les tickets',
     description:
-      'Filtrable par statut, catégorie, priorité et technicien assigné (status/categoryId/priorityId/technicianId)',
+      'Filtrable par statut, catégorie, priorité et technicien assigné (status/categoryId/priorityId/technicianId). Résultats bornés par rôle : EMPLOYEE ne voit que ses tickets, TECHNICIAN que ceux qui lui sont assignés (RM-04)',
   })
   @Get()
-  findAll(@Query() query: FindTicketsQueryDto) {
-    return this.ticketsService.findAll(query);
+  findAll(@Query() query: FindTicketsQueryDto, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.ticketsService.findAll(query, requester);
   }
 
-  @ApiOperation({ summary: 'Récupérer un ticket par ID' })
+  @ApiOperation({
+    summary: 'Récupérer un ticket par ID',
+    description:
+      'Réservé au propriétaire pour un EMPLOYEE ou au technicien assigné pour un TECHNICIAN (RM-04)',
+  })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.ticketsService.findOne(id);
+  findOne(@Param('id') id: string, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.ticketsService.findOne(id, requester);
   }
 
   @ApiOperation({
@@ -113,7 +118,12 @@ export class TicketsController {
     @Body() updateTicketDto: UpdateTicketDto,
     @Req() req: Request,
   ) {
-    const requester = req.user as { userId: string };
-    return this.ticketsService.update(id, updateTicketDto, requester.userId);
+    const requester = req.user as { userId: string; role: Role };
+    return this.ticketsService.update(
+      id,
+      updateTicketDto,
+      requester.userId,
+      requester.role,
+    );
   }
 }

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -13,18 +21,28 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 export class CommentsController {
   constructor(private readonly commentsService: CommentsService) {}
 
-  @ApiOperation({ summary: "Lister les commentaires d'un ticket" })
+  @ApiOperation({
+    summary: "Lister les commentaires d'un ticket",
+    description:
+      "Réservé à l'employé propriétaire, au technicien assigné, ou aux rôles SUPERVISOR/ADMIN (RM-04)",
+  })
   @Get()
-  findAll(@Param('ticketId') ticketId: string) {
-    return this.commentsService.findAllForTicket(ticketId);
+  findAll(@Param('ticketId') ticketId: string, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.commentsService.findAllForTicket(ticketId, requester);
   }
 
   @ApiOperation({
     summary: 'Ajouter un commentaire',
-    description: "Réservé à l'employé propriétaire, au technicien assigné, ou aux rôles SUPERVISOR/ADMIN",
+    description:
+      "Réservé à l'employé propriétaire, au technicien assigné, ou aux rôles SUPERVISOR/ADMIN",
   })
   @Post()
-  create(@Param('ticketId') ticketId: string, @Body() dto: CreateCommentDto, @Req() req: Request) {
+  create(
+    @Param('ticketId') ticketId: string,
+    @Body() dto: CreateCommentDto,
+    @Req() req: Request,
+  ) {
     const requester = req.user as { userId: string; role: Role };
     return this.commentsService.create(ticketId, requester, dto);
   }

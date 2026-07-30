@@ -100,6 +100,7 @@ export default function TicketDetailPage() {
   const [attachments, setAttachments] = useState<TicketAttachment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
 
   const [newComment, setNewComment] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -138,9 +139,13 @@ export default function TicketDetailPage() {
         setAttachments(attachmentsData);
       })
       .catch((err) => {
-        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        if (err instanceof ApiError && err.status === 401) {
           clearSession();
           router.replace("/login");
+          return;
+        }
+        if (err instanceof ApiError && err.status === 403) {
+          setForbidden(true);
           return;
         }
         if (err instanceof ApiError && err.status === 404) {
@@ -386,7 +391,13 @@ export default function TicketDetailPage() {
       <AppHeader title={ticket ? ticket.reference : "Ticket"} action={backLink} />
 
       <main className="mx-auto max-w-2xl px-6 py-8">
-        {notFound ? (
+        {forbidden ? (
+          <Alert>
+            <AlertDescription>
+              Vous n&apos;avez pas accès à ce ticket. Retournez à la liste pour consulter vos tickets.
+            </AlertDescription>
+          </Alert>
+        ) : notFound ? (
           <Alert>
             <AlertDescription>
               Ce ticket n&apos;existe pas ou a été supprimé. Retournez à la liste pour consulter les

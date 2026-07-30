@@ -11,7 +11,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { createReadStream, mkdirSync } from 'fs';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -33,15 +39,21 @@ import {
 export class AttachmentsController {
   constructor(private readonly attachmentsService: AttachmentsService) {}
 
-  @ApiOperation({ summary: "Lister les pièces jointes d'un ticket" })
+  @ApiOperation({
+    summary: "Lister les pièces jointes d'un ticket",
+    description:
+      "Réservé à l'employé propriétaire, au technicien assigné, ou aux rôles SUPERVISOR/ADMIN (RM-04)",
+  })
   @Get()
-  findAll(@Param('ticketId') ticketId: string) {
-    return this.attachmentsService.findAllForTicket(ticketId);
+  findAll(@Param('ticketId') ticketId: string, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.attachmentsService.findAllForTicket(ticketId, requester);
   }
 
   @ApiOperation({
     summary: 'Joindre un fichier',
-    description: "Réservé à l'employé propriétaire, au technicien assigné, ou aux rôles SUPERVISOR/ADMIN",
+    description:
+      "Réservé à l'employé propriétaire, au technicien assigné, ou aux rôles SUPERVISOR/ADMIN",
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -55,7 +67,10 @@ export class AttachmentsController {
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (req, _file, callback) => {
-          const dir = join(ATTACHMENTS_ROOT, (req.params as { ticketId: string }).ticketId);
+          const dir = join(
+            ATTACHMENTS_ROOT,
+            (req.params as { ticketId: string }).ticketId,
+          );
           mkdirSync(dir, { recursive: true });
           callback(null, dir);
         },
@@ -66,7 +81,12 @@ export class AttachmentsController {
       limits: { fileSize: MAX_ATTACHMENT_SIZE_BYTES },
       fileFilter: (_req, file, callback) => {
         if (!ALLOWED_ATTACHMENT_MIME_TYPES.includes(file.mimetype)) {
-          callback(new BadRequestException(`Type de fichier non autorisé : ${file.mimetype}`), false);
+          callback(
+            new BadRequestException(
+              `Type de fichier non autorisé : ${file.mimetype}`,
+            ),
+            false,
+          );
           return;
         }
         callback(null, true);
@@ -86,11 +106,27 @@ export class AttachmentsController {
     return this.attachmentsService.create(ticketId, requester, file);
   }
 
-  @ApiOperation({ summary: 'Télécharger une pièce jointe' })
+  @ApiOperation({
+    summary: 'Télécharger une pièce jointe',
+    description:
+      "Réservé à l'employé propriétaire, au technicien assigné, ou aux rôles SUPERVISOR/ADMIN (RM-04)",
+  })
   @Get(':attachmentId/download')
-  async download(@Param('ticketId') ticketId: string, @Param('attachmentId') attachmentId: string) {
-    const attachment = await this.attachmentsService.findOneOrThrow(ticketId, attachmentId);
-    const filePath = this.attachmentsService.resolveFilePath(ticketId, attachment.storedFileName);
+  async download(
+    @Param('ticketId') ticketId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Req() req: Request,
+  ) {
+    const requester = req.user as { userId: string; role: Role };
+    const attachment = await this.attachmentsService.findOneOrThrow(
+      ticketId,
+      attachmentId,
+      requester,
+    );
+    const filePath = this.attachmentsService.resolveFilePath(
+      ticketId,
+      attachment.storedFileName,
+    );
 
     return new StreamableFile(createReadStream(filePath), {
       type: attachment.mimeType,

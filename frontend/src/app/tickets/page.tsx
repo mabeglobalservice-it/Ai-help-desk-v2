@@ -56,10 +56,8 @@ export default function TicketsPage() {
   const [statusFilter, setStatusFilter] = useState<TicketStatus | typeof ALL>(ALL);
   const [categoryFilter, setCategoryFilter] = useState(ALL);
   const [priorityFilter, setPriorityFilter] = useState(ALL);
-  const [myTicketsOnly, setMyTicketsOnly] = useState(false);
 
-  const hasActiveFilter =
-    statusFilter !== ALL || categoryFilter !== ALL || priorityFilter !== ALL || myTicketsOnly;
+  const hasActiveFilter = statusFilter !== ALL || categoryFilter !== ALL || priorityFilter !== ALL;
 
   useEffect(() => {
     const token = getToken();
@@ -86,7 +84,6 @@ export default function TicketsPage() {
       status: statusFilter === ALL ? undefined : statusFilter,
       categoryId: categoryFilter === ALL ? undefined : categoryFilter,
       priorityId: priorityFilter === ALL ? undefined : priorityFilter,
-      technicianId: myTicketsOnly && user ? user.id : undefined,
     })
       .then((data) => {
         setTickets(data);
@@ -100,13 +97,12 @@ export default function TicketsPage() {
         }
         setError("Impossible de charger les tickets pour le moment.");
       });
-  }, [router, statusFilter, categoryFilter, priorityFilter, myTicketsOnly, user]);
+  }, [router, statusFilter, categoryFilter, priorityFilter]);
 
   function resetFilters() {
     setStatusFilter(ALL);
     setCategoryFilter(ALL);
     setPriorityFilter(ALL);
-    setMyTicketsOnly(false);
   }
 
   return (
@@ -193,23 +189,6 @@ export default function TicketsPage() {
               </SelectContent>
             </Select>
           </div>
-
-          {user?.role === "TECHNICIAN" ? (
-            <div className="flex flex-col gap-1.5">
-              <span aria-hidden className="invisible text-sm font-medium">
-                Mes tickets
-              </span>
-              <Button
-                type="button"
-                variant={myTicketsOnly ? "default" : "outline"}
-                size="sm"
-                aria-pressed={myTicketsOnly}
-                onClick={() => setMyTicketsOnly((prev) => !prev)}
-              >
-                Mes tickets
-              </Button>
-            </div>
-          ) : null}
 
           {hasActiveFilter ? (
             <Button variant="ghost" size="sm" onClick={resetFilters}>
