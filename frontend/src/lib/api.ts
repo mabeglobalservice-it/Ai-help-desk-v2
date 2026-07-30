@@ -79,6 +79,9 @@ export interface Ticket {
   status: TicketStatus;
   createdAt: string;
   resolvedAt: string | null;
+  rating: number | null;
+  ratingComment: string | null;
+  ratedAt: string | null;
   employee: { id: string; displayName: string; email: string };
   technician: { id: string; displayName: string; email: string } | null;
   category: { id: string; name: string };
@@ -126,6 +129,18 @@ export interface UpdateTicketInput {
 export function updateTicket(token: string, id: string, input: UpdateTicketInput): Promise<Ticket> {
   return apiFetch<Ticket>(`/tickets/${id}`, token, {
     method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface RateTicketInput {
+  rating: number;
+  comment?: string;
+}
+
+export function rateTicket(token: string, id: string, input: RateTicketInput): Promise<Ticket> {
+  return apiFetch<Ticket>(`/tickets/${id}/rate`, token, {
+    method: "POST",
     body: JSON.stringify(input),
   });
 }

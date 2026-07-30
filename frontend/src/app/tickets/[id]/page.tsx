@@ -3,6 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { Star } from "lucide-react";
 import {
   ApiError,
   ATTACHMENT_ACCEPT,
@@ -12,6 +13,7 @@ import {
   getComments,
   getTicket,
   getUsers,
+  rateTicket,
   suggestTechnician,
   updateTicket,
   uploadAttachment,
@@ -57,6 +59,36 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function StarPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange?: (value: number) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          disabled={!onChange || disabled}
+          aria-label={`${star} étoile${star > 1 ? "s" : ""}`}
+          aria-pressed={star <= value}
+          onClick={() => onChange?.(star)}
+          className={onChange ? "cursor-pointer" : "cursor-default"}
+        >
+          <Star
+            className={`size-5 ${star <= value ? "fill-signal-amber text-signal-amber" : "text-muted-foreground"}`}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function TicketDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -85,6 +117,11 @@ export default function TicketDetailPage() {
   const [suggestionInfo, setSuggestionInfo] = useState<string | null>(null);
   const [suggestError, setSuggestError] = useState<string | null>(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
+
+  const [ratingValue, setRatingValue] = useState(0);
+  const [ratingComment, setRatingComment] = useState("");
+  const [ratingError, setRatingError] = useState<string | null>(null);
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
 
   useEffect(() => {
     const token = getToken();
@@ -134,6 +171,17 @@ export default function TicketDetailPage() {
     // different pick locally before clicking "Assigner".
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (ticket) setSelectedTechnicianId(ticket.technician?.id ?? UNASSIGNED);
+  }, [ticket]);
+
+  useEffect(() => {
+    // Intentional: same resync pattern as the technician selection above,
+    // applied to the rating form so it reflects the employee's last saved
+    // rating while still allowing them to stage an edit before submitting.
+    if (ticket) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRatingValue(ticket.rating ?? 0);
+      setRatingComment(ticket.ratingComment ?? "");
+    }
   }, [ticket]);
 
   async function refreshTicket(token: string) {
@@ -202,6 +250,29 @@ export default function TicketDetailPage() {
       );
     } finally {
       setIsSuggesting(false);
+    }
+  }
+
+  async function handleSubmitRating(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    if (ratingValue < 1) return;
+
+    setRatingError(null);
+    setIsSubmittingRating(true);
+    try {
+      await rateTicket(token, params.id, { rating: ratingValue, comment: ratingComment.trim() || undefined });
+      await refreshTicket(token);
+    } catch (err) {
+      setRatingError(
+        err instanceof ApiError ? err.message : "Impossible d'enregistrer votre évaluation pour le moment.",
+      );
+    } finally {
+      setIsSubmittingRating(false);
     }
   }
 
@@ -299,6 +370,9 @@ export default function TicketDetailPage() {
   );
 
   const canAssignTechnician = isPrivileged;
+
+  const isOwner = !!(user && ticket && ticket.employee.id === user.id);
+  const canRate = !!(ticket && ticket.status === "RESOLVED" && (isOwner || ticket.rating !== null));
 
   const backLink = (
     <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/tickets" />}>
@@ -471,6 +545,51 @@ export default function TicketDetailPage() {
                 </dl>
               </CardContent>
             </Card>
+
+            {canRate ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Évaluation de la résolution</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {isOwner ? (
+                    <form onSubmit={handleSubmitRating} className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label>Note</Label>
+                        <StarPicker value={ratingValue} onChange={setRatingValue} disabled={isSubmittingRating} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="rating-comment" className="sr-only">
+                          Commentaire (optionnel)
+                        </Label>
+                        <Textarea
+                          id="rating-comment"
+                          value={ratingComment}
+                          onChange={(event) => setRatingComment(event.target.value)}
+                          placeholder="Un commentaire sur la résolution (optionnel)..."
+                          rows={2}
+                        />
+                      </div>
+                      {ratingError ? (
+                        <Alert variant="destructive">
+                          <AlertDescription>{ratingError}</AlertDescription>
+                        </Alert>
+                      ) : null}
+                      <Button type="submit" size="sm" disabled={isSubmittingRating || ratingValue < 1}>
+                        {isSubmittingRating ? "Envoi..." : ticket.rating !== null ? "Mettre à jour" : "Envoyer"}
+                      </Button>
+                    </form>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <StarPicker value={ticket.rating ?? 0} />
+                      {ticket.ratingComment ? (
+                        <p className="text-sm whitespace-pre-wrap">{ticket.ratingComment}</p>
+                      ) : null}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
 
             <Card>
               <CardHeader>

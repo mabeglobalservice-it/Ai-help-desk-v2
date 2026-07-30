@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -9,6 +14,7 @@ import {
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { FindTicketsQueryDto } from './dto/find-tickets-query.dto';
+import { RateTicketDto } from './dto/rate-ticket.dto';
 
 const USER_SAFE_SELECT = {
   id: true,
@@ -146,6 +152,31 @@ export class TicketsService {
       .sort((a, b) => a.openTicketCount - b.openTicketCount);
 
     return ranked[0];
+  }
+
+  // docs/06-cas-utilisation.md UC-004: reserve a l'employe proprietaire,
+  // uniquement une fois le ticket resolu
+  async rate(id: string, requesterId: string, dto: RateTicketDto) {
+    const ticket = await this.findOne(id);
+
+    if (ticket.employeeId !== requesterId) {
+      throw new ForbiddenException(
+        "Seul l'employé propriétaire du ticket peut l'évaluer",
+      );
+    }
+    if (ticket.status !== TicketStatus.RESOLVED) {
+      throw new BadRequestException('Seul un ticket résolu peut être évalué');
+    }
+
+    return this.prisma.ticket.update({
+      where: { id },
+      data: {
+        rating: dto.rating,
+        ratingComment: dto.comment,
+        ratedAt: new Date(),
+      },
+      include: TICKET_INCLUDE,
+    });
   }
 
   async update(id: string, dto: UpdateTicketDto, changedById: string) {

@@ -20,6 +20,7 @@ import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { FindTicketsQueryDto } from './dto/find-tickets-query.dto';
+import { RateTicketDto } from './dto/rate-ticket.dto';
 import { AiDiagnoseDto } from '../ai/dto/ai-diagnose.dto';
 
 @ApiTags('tickets')
@@ -71,6 +72,22 @@ export class TicketsController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.ticketsService.findOne(id);
+  }
+
+  @ApiOperation({
+    summary: "Évalue la résolution d'un ticket (UC-004)",
+    description:
+      "Réservé à l'employé propriétaire, uniquement une fois le ticket résolu",
+  })
+  @Roles(Role.EMPLOYEE)
+  @Post(':id/rate')
+  rate(
+    @Param('id') id: string,
+    @Body() dto: RateTicketDto,
+    @Req() req: Request,
+  ) {
+    const requester = req.user as { userId: string };
+    return this.ticketsService.rate(id, requester.userId, dto);
   }
 
   @ApiOperation({
