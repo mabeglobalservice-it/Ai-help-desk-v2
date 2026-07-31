@@ -20,6 +20,12 @@ export interface DashboardStatsResult {
   totalOpen: number;
   totalResolved: number;
   averageResolutionHours: number | null;
+  // docs/11-documentation-api.md §11 (GET /analytics/sla-compliance),
+  // docs/12-maquettes-ui-ux.md §4.5 ("SLA respecté : 96%"). Percentage
+  // (0-100) of resolved tickets with an SLA target that were resolved
+  // on or before slaDueAt. null when no resolved ticket in the period had
+  // an SLA target (never claims a misleading 0%/100%).
+  slaComplianceRate: number | null;
   byCategory: { categoryId: string; categoryName: string; count: number }[];
   byTechnician: {
     technicianId: string;
@@ -130,7 +136,7 @@ export class DashboardService {
           status: TicketStatus.RESOLVED,
           resolvedAt: { not: null },
         },
-        select: { createdAt: true, resolvedAt: true },
+        select: { createdAt: true, resolvedAt: true, slaDueAt: true },
       }),
       this.prisma.ticket.groupBy({
         by: ['categoryId'],
@@ -153,6 +159,18 @@ export class DashboardService {
         ) /
         resolvedTickets.length /
         (1000 * 60 * 60)
+      : null;
+
+    const ticketsWithSla = resolvedTickets.filter(
+      (ticket) => ticket.slaDueAt !== null,
+    );
+    const slaComplianceRate = ticketsWithSla.length
+      ? (ticketsWithSla.filter(
+          (ticket) =>
+            ticket.resolvedAt!.getTime() <= ticket.slaDueAt!.getTime(),
+        ).length /
+          ticketsWithSla.length) *
+        100
       : null;
 
     const categoryNameById = new Map(
@@ -192,6 +210,7 @@ export class DashboardService {
       totalOpen,
       totalResolved,
       averageResolutionHours,
+      slaComplianceRate,
       byCategory,
       byTechnician,
     };
@@ -205,6 +224,9 @@ export class DashboardService {
     lines.push(`Tickets résolus,${stats.totalResolved}`);
     lines.push(
       `Temps moyen de résolution (h),${stats.averageResolutionHours !== null ? stats.averageResolutionHours.toFixed(2) : ''}`,
+    );
+    lines.push(
+      `Taux de respect des SLA (%),${stats.slaComplianceRate !== null ? stats.slaComplianceRate.toFixed(1) : ''}`,
     );
     lines.push('');
 
@@ -252,6 +274,13 @@ export class DashboardService {
         `Temps moyen de résolution : ${
           stats.averageResolutionHours !== null
             ? `${stats.averageResolutionHours.toFixed(1)} h`
+            : '—'
+        }`,
+      );
+      doc.text(
+        `Taux de respect des SLA : ${
+          stats.slaComplianceRate !== null
+            ? `${stats.slaComplianceRate.toFixed(1)} %`
             : '—'
         }`,
       );

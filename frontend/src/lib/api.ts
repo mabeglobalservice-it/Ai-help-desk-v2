@@ -609,6 +609,7 @@ export interface DashboardStats {
   totalOpen: number;
   totalResolved: number;
   averageResolutionHours: number | null;
+  slaComplianceRate: number | null;
   byCategory: { categoryId: string; categoryName: string; count: number }[];
   byTechnician: { technicianId: string; technicianName: string; count: number }[];
 }
