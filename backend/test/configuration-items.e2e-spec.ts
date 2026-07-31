@@ -22,6 +22,7 @@ describe('ConfigurationItems (e2e)', () => {
   let priorityId: string;
   let employeeId: string;
   let ciId: string;
+  let teamId: string;
 
   let employeeToken: string;
   let supervisorToken: string;
@@ -81,6 +82,17 @@ describe('ConfigurationItems (e2e)', () => {
       loginAs(employeeEmail),
       loginAs(supervisorEmail),
     ]);
+
+    // The ticket created below has no technicianId, so TicketsService
+    // auto-assigns it (BR-03/US-13). With no team for this category, that
+    // fallback would scan every active TECHNICIAN in the real Postgres
+    // instance — and e2e spec files run in parallel Jest workers against
+    // that same shared database, so it could pick up a technician fixture
+    // from a different, concurrently running spec file. An empty team tied
+    // to this category keeps the ticket deterministically unassigned instead.
+    teamId = (
+      await prisma.team.create({ data: { name: 'E2E CI Team', categoryId } })
+    ).id;
   });
 
   afterAll(async () => {
@@ -88,6 +100,7 @@ describe('ConfigurationItems (e2e)', () => {
     if (ciId)
       await prisma.configurationItem.deleteMany({ where: { id: ciId } });
     await prisma.ciType.delete({ where: { id: ciTypeId } });
+    await prisma.team.delete({ where: { id: teamId } });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
     await prisma.priority.delete({ where: { id: priorityId } });
     await prisma.refreshToken.deleteMany({

@@ -4,7 +4,7 @@ import { TicketsService } from './tickets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
-import { Role, TicketStatus } from '../../generated/prisma/client';
+import { Prisma, Role, TicketStatus } from '../../generated/prisma/client';
 
 describe('TicketsService', () => {
   let service: TicketsService;
@@ -13,10 +13,14 @@ describe('TicketsService', () => {
       findMany: jest.Mock;
       findUnique: jest.Mock;
       update: jest.Mock;
+      create: jest.Mock;
       count: jest.Mock;
+      groupBy: jest.Mock;
     };
     ticketStatusHistory: { create: jest.Mock };
     slaPolicy: { findUnique: jest.Mock };
+    team: { findMany: jest.Mock };
+    user: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let notificationsService: { create: jest.Mock };
@@ -28,10 +32,14 @@ describe('TicketsService', () => {
         findMany: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
-        count: jest.fn(),
+        create: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+        groupBy: jest.fn().mockResolvedValue([]),
       },
       ticketStatusHistory: { create: jest.fn() },
-      slaPolicy: { findUnique: jest.fn() },
+      slaPolicy: { findUnique: jest.fn().mockResolvedValue(null) },
+      team: { findMany: jest.fn().mockResolvedValue([]) },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
@@ -303,6 +311,185 @@ describe('TicketsService', () => {
           type: 'TICKET_ASSIGNED',
         }),
       );
+    });
+  });
+
+  // docs/02-brd.md BR-03, docs/05-user-stories.md US-13,
+  // docs/06-cas-utilisation.md UC-001 step 9
+  describe('create (auto-assignment)', () => {
+    const dto = {
+      categoryId: 'cat-1',
+      priorityId: 'prio-1',
+      title: 'Le serveur ne répond plus',
+    };
+
+    it('auto-assigns the least-loaded technician in the matching team', async () => {
+      prisma.team.findMany.mockResolvedValue([{ id: 'team-1' }]);
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'tech-busy', displayName: 'Busy', email: 'busy@test.com' },
+        { id: 'tech-free', displayName: 'Free', email: 'free@test.com' },
+      ]);
+      prisma.ticket.groupBy.mockResolvedValue([
+        { technicianId: 'tech-busy', _count: { _all: 5 } },
+      ]);
+      const created = {
+        id: 'tkt-1',
+        reference: 'TCK-2026-0001',
+        technicianId: 'tech-free',
+      };
+      prisma.ticket.create.mockResolvedValue(created);
+
+      const result = await service.create(dto, 'emp-1');
+
+      expect(prisma.ticket.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ technicianId: 'tech-free' }),
+        }),
+      );
+      expect(realtimeGateway.emitToUser).toHaveBeenCalledWith(
+        'tech-free',
+        'ticket.created',
+        created,
+      );
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientId: 'tech-free',
+          type: 'TICKET_ASSIGNED',
+        }),
+      );
+      expect(result).toBe(created);
+    });
+
+    it('falls back to the least-loaded generalist when no team matches the category', async () => {
+      prisma.team.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'tech-a', displayName: 'A', email: 'a@test.com' },
+      ]);
+      prisma.ticket.create.mockResolvedValue({
+        id: 'tkt-1',
+        reference: 'TCK-2026-0001',
+        technicianId: 'tech-a',
+      });
+
+      await service.create(dto, 'emp-1');
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { role: Role.TECHNICIAN, isActive: true },
+        }),
+      );
+    });
+
+    it('leaves the ticket unassigned when no technician is available at all', async () => {
+      prisma.team.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      const created = {
+        id: 'tkt-1',
+        reference: 'TCK-2026-0001',
+        technicianId: null,
+      };
+      prisma.ticket.create.mockResolvedValue(created);
+
+      await service.create(dto, 'emp-1');
+
+      expect(prisma.ticket.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ technicianId: undefined }),
+        }),
+      );
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+
+    it('honors an explicit technicianId override instead of auto-assigning', async () => {
+      const created = {
+        id: 'tkt-1',
+        reference: 'TCK-2026-0001',
+        technicianId: 'tech-manual',
+      };
+      prisma.ticket.create.mockResolvedValue(created);
+
+      await service.create({ ...dto, technicianId: 'tech-manual' }, 'emp-1');
+
+      expect(prisma.team.findMany).not.toHaveBeenCalled();
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
+      expect(prisma.ticket.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ technicianId: 'tech-manual' }),
+        }),
+      );
+    });
+
+    // generateReference()'s count()+1 scheme isn't atomic under concurrent
+    // creates (e.g. parallel e2e test workers hitting the same table) —
+    // a collision on the unique reference should be retried, not surfaced
+    // as a 500.
+    it('retries with a fresh reference when the generated one collides', async () => {
+      prisma.team.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.ticket.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      const created = {
+        id: 'tkt-1',
+        reference: 'TCK-2026-0002',
+        technicianId: null,
+      };
+      prisma.ticket.create
+        .mockRejectedValueOnce(
+          new Prisma.PrismaClientKnownRequestError('duplicate', {
+            code: 'P2002',
+            clientVersion: '7.9.1',
+          }),
+        )
+        .mockResolvedValueOnce(created);
+
+      const result = await service.create(dto, 'emp-1');
+
+      expect(prisma.ticket.create).toHaveBeenCalledTimes(2);
+      expect(prisma.ticket.create).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          data: expect.objectContaining({ reference: 'TCK-2026-0001' }),
+        }),
+      );
+      expect(prisma.ticket.create).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: expect.objectContaining({ reference: 'TCK-2026-0002' }),
+        }),
+      );
+      expect(result).toBe(created);
+    });
+  });
+
+  describe('suggestTechnician', () => {
+    it('throws NotFoundException when no technician is available', async () => {
+      prisma.ticket.findUnique.mockResolvedValue({
+        id: 'tkt-1',
+        categoryId: 'cat-1',
+        statusHistory: [],
+      });
+      prisma.team.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await expect(service.suggestTechnician('tkt-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('returns the least-loaded candidate', async () => {
+      prisma.ticket.findUnique.mockResolvedValue({
+        id: 'tkt-1',
+        categoryId: 'cat-1',
+        statusHistory: [],
+      });
+      prisma.team.findMany.mockResolvedValue([]);
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'tech-a', displayName: 'A', email: 'a@test.com' },
+      ]);
+      prisma.ticket.groupBy.mockResolvedValue([]);
+
+      const result = await service.suggestTechnician('tkt-1');
+
+      expect(result.id).toBe('tech-a');
     });
   });
 });

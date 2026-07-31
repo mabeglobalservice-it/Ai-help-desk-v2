@@ -9,6 +9,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   NotificationType,
+  Prisma,
   Role,
   TicketStatus,
 } from '../../generated/prisma/client';
@@ -65,41 +66,89 @@ export class TicketsService {
     return `TCK-${year}-${sequence}`;
   }
 
+  // generateReference()'s count()+1 scheme isn't atomic: two concurrent
+  // creates can compute the same reference and collide on the unique
+  // constraint. Rather than a heavier atomic-counter migration, retry with a
+  // freshly generated reference a few times — collisions are rare in
+  // practice (they mostly showed up here under parallel e2e test workers
+  // hitting the same table at once).
+  private async createTicketRecord(
+    reference: string,
+    data: Omit<Prisma.TicketUncheckedCreateInput, 'reference'>,
+    attempt = 0,
+  ): Promise<Prisma.TicketGetPayload<{ include: typeof TICKET_INCLUDE }>> {
+    try {
+      return await this.prisma.ticket.create({
+        data: { ...data, reference },
+        include: TICKET_INCLUDE,
+      });
+    } catch (error) {
+      if (
+        attempt < 3 &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return this.createTicketRecord(
+          await this.generateReference(),
+          data,
+          attempt + 1,
+        );
+      }
+      throw error;
+    }
+  }
+
   // employeeId comes from the authenticated requester (req.user), never from
   // the request body — otherwise any EMPLOYEE could create a ticket in
   // someone else's name.
+  //
+  // docs/02-brd.md BR-03, docs/05-user-stories.md US-13, docs/06-cas-
+  // utilisation.md UC-001 step 9: the ticket is auto-assigned to the
+  // least-loaded technician in the matching specialty (falling back to the
+  // least-loaded generalist if none) at creation time, without requiring a
+  // supervisor to manually trigger it. A caller-supplied technicianId (e.g.
+  // a future admin bulk-import) is honored as an explicit override instead.
   async create(dto: CreateTicketDto, employeeId: string) {
-    const [reference, slaPolicy] = await Promise.all([
+    const [reference, slaPolicy, suggested] = await Promise.all([
       this.generateReference(),
       this.prisma.slaPolicy.findUnique({
         where: { priorityId: dto.priorityId },
       }),
+      dto.technicianId
+        ? Promise.resolve(null)
+        : this.findLeastLoadedTechnician(dto.categoryId),
     ]);
 
     const slaDueAt = slaPolicy
       ? new Date(Date.now() + slaPolicy.resolutionHours * 60 * 60 * 1000)
       : null;
+    const technicianId = dto.technicianId ?? suggested?.id;
 
-    const ticket = await this.prisma.ticket.create({
-      data: {
-        reference,
-        employeeId,
-        categoryId: dto.categoryId,
-        priorityId: dto.priorityId,
-        title: dto.title,
-        summary: dto.summary,
-        technicianId: dto.technicianId,
-        ciId: dto.ciId,
-        slaDueAt,
-      },
-      include: TICKET_INCLUDE,
+    const ticket = await this.createTicketRecord(reference, {
+      employeeId,
+      categoryId: dto.categoryId,
+      priorityId: dto.priorityId,
+      title: dto.title,
+      summary: dto.summary,
+      technicianId,
+      ciId: dto.ciId,
+      slaDueAt,
     });
 
-    // docs/11-documentation-api.md §13: ticket.created diffuse aux
-    // superviseurs/admins (aucun technicien n'est encore concerne tant
-    // qu'aucune assignation n'a eu lieu).
+    // docs/11-documentation-api.md §13: ticket.created est reçu par le
+    // technicien concerné (s'il y en a un dès la création) et les
+    // superviseurs/admins.
     this.realtimeGateway.emitToRole(Role.SUPERVISOR, 'ticket.created', ticket);
     this.realtimeGateway.emitToRole(Role.ADMIN, 'ticket.created', ticket);
+
+    if (ticket.technicianId) {
+      this.realtimeGateway.emitToUser(
+        ticket.technicianId,
+        'ticket.created',
+        ticket,
+      );
+      await this.createAssignmentNotification(ticket, ticket.technicianId);
+    }
 
     return ticket;
   }
@@ -168,14 +217,32 @@ export class TicketsService {
     }
   }
 
-  // Finds technicians in the team(s) matching the ticket's category, falling
-  // back to all active technicians if no team is configured for it, and
-  // suggests whichever candidate currently has the fewest open tickets.
+  // Manual "suggérer" button (SUPERVISOR/ADMIN): same ranking as the
+  // automatic assignment in create(), surfaced as an explicit error when
+  // nobody is available instead of silently leaving the ticket unassigned.
   async suggestTechnician(id: string) {
     const ticket = await this.findOne(id);
+    const candidate = await this.findLeastLoadedTechnician(ticket.categoryId);
 
+    if (!candidate) {
+      throw new NotFoundException(
+        'Aucun technicien disponible pour suggérer une assignation',
+      );
+    }
+
+    return candidate;
+  }
+
+  // docs/06-cas-utilisation.md UC-001, cas d'erreur: finds technicians in
+  // the team(s) matching the category, falling back to all active
+  // technicians (generalistes) if no team is configured for it, and returns
+  // whichever candidate currently has the fewest open tickets. Returns null
+  // rather than throwing when nobody is available at all, so automatic
+  // assignment at ticket creation can degrade to "unassigned" instead of
+  // failing the whole creation.
+  private async findLeastLoadedTechnician(categoryId: string) {
     const matchingTeams = await this.prisma.team.findMany({
-      where: { categoryId: ticket.categoryId },
+      where: { categoryId },
       select: { id: true },
     });
     const teamIds = matchingTeams.map((team) => team.id);
@@ -189,11 +256,7 @@ export class TicketsService {
       select: { id: true, displayName: true, email: true },
     });
 
-    if (candidates.length === 0) {
-      throw new NotFoundException(
-        'Aucun technicien disponible pour suggérer une assignation',
-      );
-    }
+    if (candidates.length === 0) return null;
 
     const openCounts = await this.prisma.ticket.groupBy({
       by: ['technicianId'],
@@ -297,18 +360,10 @@ export class TicketsService {
         'ticket.assigned',
         updated,
       );
-
-      try {
-        await this.notificationsService.create({
-          recipientId: dto.technicianId as string,
-          type: NotificationType.TICKET_ASSIGNED,
-          message: `Vous avez été assigné au ticket ${updated.reference}`,
-          ticketId: updated.id,
-        });
-      } catch (error) {
-        // best-effort: a notification failure shouldn't fail the ticket update
-        console.error('Failed to create ticket assignment notification', error);
-      }
+      await this.createAssignmentNotification(
+        updated,
+        dto.technicianId as string,
+      );
     }
 
     if (isStatusChange) {
@@ -322,6 +377,26 @@ export class TicketsService {
     }
 
     return updated;
+  }
+
+  // docs/06-cas-utilisation.md UC-001 postcondition: "notification envoyée
+  // au technicien assigné" — shared by the automatic assignment at creation
+  // and manual (re)assignment via update().
+  private async createAssignmentNotification(
+    ticket: { id: string; reference: string },
+    technicianId: string,
+  ) {
+    try {
+      await this.notificationsService.create({
+        recipientId: technicianId,
+        type: NotificationType.TICKET_ASSIGNED,
+        message: `Vous avez été assigné au ticket ${ticket.reference}`,
+        ticketId: ticket.id,
+      });
+    } catch (error) {
+      // best-effort: a notification failure shouldn't fail the ticket create/update
+      console.error('Failed to create ticket assignment notification', error);
+    }
   }
 
   // docs/11-documentation-api.md §13: ticket.statusChanged, meme public

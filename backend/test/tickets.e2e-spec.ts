@@ -24,6 +24,7 @@ describe('Tickets (e2e)', () => {
   let assignedTechId: string;
   let categoryId: string;
   let priorityId: string;
+  let teamId: string;
 
   let employeeToken: string;
   let assignedTechToken: string;
@@ -51,46 +52,64 @@ describe('Tickets (e2e)', () => {
     prisma = app.get(PrismaService);
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const [employee, assignedTech, , category, priority] = await Promise.all([
-      prisma.user.create({
-        data: {
-          email: employeeEmail,
-          passwordHash,
-          displayName: 'E2E Employee',
-          role: Role.EMPLOYEE,
-          isActive: true,
-        },
-      }),
-      prisma.user.create({
-        data: {
-          email: assignedTechEmail,
-          passwordHash,
-          displayName: 'E2E Assigned Technician',
-          role: Role.TECHNICIAN,
-          isActive: true,
-        },
-      }),
-      prisma.user.create({
-        data: {
-          email: otherTechEmail,
-          passwordHash,
-          displayName: 'E2E Other Technician',
-          role: Role.TECHNICIAN,
-          isActive: true,
-        },
-      }),
-      prisma.ticketCategory.create({
-        data: { name: 'E2E Test Category' },
-      }),
-      prisma.priority.create({
-        data: { name: 'E2E Test Priority', level: 999 },
-      }),
-    ]);
+    const [employee, assignedTech, otherTech, category, priority] =
+      await Promise.all([
+        prisma.user.create({
+          data: {
+            email: employeeEmail,
+            passwordHash,
+            displayName: 'E2E Employee',
+            role: Role.EMPLOYEE,
+            isActive: true,
+          },
+        }),
+        prisma.user.create({
+          data: {
+            email: assignedTechEmail,
+            passwordHash,
+            displayName: 'E2E Assigned Technician',
+            role: Role.TECHNICIAN,
+            isActive: true,
+          },
+        }),
+        prisma.user.create({
+          data: {
+            email: otherTechEmail,
+            passwordHash,
+            displayName: 'E2E Other Technician',
+            role: Role.TECHNICIAN,
+            isActive: true,
+          },
+        }),
+        prisma.ticketCategory.create({
+          data: { name: 'E2E Test Category' },
+        }),
+        prisma.priority.create({
+          data: { name: 'E2E Test Priority', level: 999 },
+        }),
+      ]);
 
     employeeId = employee.id;
     assignedTechId = assignedTech.id;
     categoryId = category.id;
     priorityId = priority.id;
+
+    // Scopes the auto-assignment fallback (RM-04's "generalist" path, no
+    // team match) to just this fixture's two technicians. Without a team
+    // tied to categoryId, that fallback legitimately scans every active
+    // TECHNICIAN in the real Postgres instance — and e2e spec files run in
+    // parallel Jest workers against that same shared database, so it could
+    // otherwise pick up a technician fixture from a different, concurrently
+    // running spec file.
+    teamId = (
+      await prisma.team.create({
+        data: { name: 'E2E Test Team', categoryId },
+      })
+    ).id;
+    await prisma.user.updateMany({
+      where: { id: { in: [assignedTechId, otherTech.id] } },
+      data: { teamId },
+    });
 
     [employeeToken, assignedTechToken, otherTechToken] = await Promise.all([
       loginAs(employeeEmail),
@@ -108,7 +127,12 @@ describe('Tickets (e2e)', () => {
     await prisma.refreshToken.deleteMany({
       where: { user: { email: { in: userEmails } } },
     });
+    await prisma.user.updateMany({
+      where: { email: { in: userEmails } },
+      data: { teamId: null },
+    });
     await prisma.user.deleteMany({ where: { email: { in: userEmails } } });
+    await prisma.team.delete({ where: { id: teamId } });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
     await prisma.priority.delete({ where: { id: priorityId } });
     await app.close();
