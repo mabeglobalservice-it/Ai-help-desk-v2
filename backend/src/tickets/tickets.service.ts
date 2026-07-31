@@ -333,6 +333,7 @@ export class TicketsService {
           ciId: dto.ciId,
           status: dto.status,
           resolvedAt: isResolved ? new Date() : undefined,
+          resolutionNote: dto.resolutionNote,
         },
         include: TICKET_INCLUDE,
       });

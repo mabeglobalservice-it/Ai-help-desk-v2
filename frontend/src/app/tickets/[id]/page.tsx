@@ -114,6 +114,8 @@ export default function TicketDetailPage() {
   const [technicians, setTechnicians] = useState<AdminUser[]>([]);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [showResolvePrompt, setShowResolvePrompt] = useState(false);
+  const [resolutionNote, setResolutionNote] = useState("");
   const [selectedTechnicianId, setSelectedTechnicianId] = useState(UNASSIGNED);
   const [assignError, setAssignError] = useState<string | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
@@ -209,7 +211,17 @@ export default function TicketDetailPage() {
     if (token) refreshTicket(token);
   });
 
+  // docs/06-cas-utilisation.md UC-013: passer un ticket à "Résolu" propose
+  // une note de résolution (optionnelle en V1) avant d'envoyer le
+  // changement, plutôt que de l'appliquer immédiatement comme les autres
+  // transitions de statut.
   async function handleStatusChange(newStatus: TicketStatus) {
+    if (newStatus === "RESOLVED") {
+      setStatusError(null);
+      setShowResolvePrompt(true);
+      return;
+    }
+
     const token = getToken();
     if (!token) {
       router.replace("/login");
@@ -226,6 +238,35 @@ export default function TicketDetailPage() {
     } finally {
       setIsUpdatingStatus(false);
     }
+  }
+
+  async function handleConfirmResolve() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setStatusError(null);
+    setIsUpdatingStatus(true);
+    try {
+      await updateTicket(token, params.id, {
+        status: "RESOLVED",
+        resolutionNote: resolutionNote.trim() || undefined,
+      });
+      await refreshTicket(token);
+      setShowResolvePrompt(false);
+      setResolutionNote("");
+    } catch (err) {
+      setStatusError(err instanceof ApiError ? err.message : "Impossible de résoudre le ticket pour le moment.");
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  }
+
+  function handleCancelResolve() {
+    setShowResolvePrompt(false);
+    setResolutionNote("");
   }
 
   async function handleAssignTechnician() {
@@ -464,6 +505,32 @@ export default function TicketDetailPage() {
                     <AlertDescription>{statusError}</AlertDescription>
                   </Alert>
                 ) : null}
+                {showResolvePrompt ? (
+                  <div className="space-y-2 rounded-md border border-border p-3">
+                    <Label htmlFor="resolution-note">Note de résolution (optionnelle)</Label>
+                    <Textarea
+                      id="resolution-note"
+                      value={resolutionNote}
+                      onChange={(event) => setResolutionNote(event.target.value)}
+                      placeholder="Ex. Redémarrage du service d'impression, problème résolu."
+                      rows={3}
+                      disabled={isUpdatingStatus}
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleConfirmResolve} disabled={isUpdatingStatus}>
+                        {isUpdatingStatus ? "Résolution..." : "Confirmer la résolution"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCancelResolve}
+                        disabled={isUpdatingStatus}
+                      >
+                        Annuler
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
               </CardHeader>
               <CardContent className="space-y-6">
                 <div>
@@ -474,6 +541,15 @@ export default function TicketDetailPage() {
                     {ticket.summary || <span className="text-muted-foreground">Aucune description fournie.</span>}
                   </dd>
                 </div>
+
+                {ticket.resolutionNote ? (
+                  <div>
+                    <dt className="font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase">
+                      Note de résolution
+                    </dt>
+                    <dd className="mt-1 text-sm whitespace-pre-wrap">{ticket.resolutionNote}</dd>
+                  </div>
+                ) : null}
 
                 <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
                   <Field label="Référence">

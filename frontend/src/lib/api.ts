@@ -154,6 +154,7 @@ export interface Ticket {
   status: TicketStatus;
   createdAt: string;
   resolvedAt: string | null;
+  resolutionNote: string | null;
   slaDueAt: string | null;
   rating: number | null;
   ratingComment: string | null;
@@ -206,6 +207,7 @@ export function getTicket(token: string, id: string): Promise<TicketDetail> {
 export interface UpdateTicketInput {
   status?: TicketStatus;
   technicianId?: string;
+  resolutionNote?: string;
 }
 
 export function updateTicket(token: string, id: string, input: UpdateTicketInput): Promise<Ticket> {

@@ -249,14 +249,20 @@ describe('Tickets (e2e)', () => {
       .expect(400);
   });
 
-  it('lets the assigned technician resolve the ticket', async () => {
+  it('lets the assigned technician resolve the ticket with a resolution note (UC-013)', async () => {
     const res = await request(app.getHttpServer())
       .patch(`/tickets/${ticketId}`)
       .set('Authorization', `Bearer ${assignedTechToken}`)
-      .send({ status: TicketStatus.RESOLVED })
+      .send({
+        status: TicketStatus.RESOLVED,
+        resolutionNote: "Redémarrage du poste — le pilote s'était mal chargé.",
+      })
       .expect(200);
 
     expect(res.body.status).toBe(TicketStatus.RESOLVED);
+    expect(res.body.resolutionNote).toBe(
+      "Redémarrage du poste — le pilote s'était mal chargé.",
+    );
   });
 
   it('rejects a rating from someone other than the owning employee', async () => {

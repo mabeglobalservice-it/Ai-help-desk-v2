@@ -289,6 +289,34 @@ describe('TicketsService', () => {
       );
     });
 
+    // docs/06-cas-utilisation.md UC-013
+    it('persists the resolution note alongside the RESOLVED status', async () => {
+      const updated = {
+        ...existing,
+        status: TicketStatus.RESOLVED,
+        resolutionNote: 'Redémarrage du service a résolu le problème.',
+      };
+      prisma.ticket.update.mockResolvedValue(updated);
+
+      await service.update(
+        'tkt-1',
+        {
+          status: TicketStatus.RESOLVED,
+          resolutionNote: 'Redémarrage du service a résolu le problème.',
+        },
+        'sup-1',
+        Role.SUPERVISOR,
+      );
+
+      expect(prisma.ticket.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            resolutionNote: 'Redémarrage du service a résolu le problème.',
+          }),
+        }),
+      );
+    });
+
     it('notifies and emits realtime event on new technician assignment', async () => {
       const updated = { ...existing, technicianId: 'tech-9' };
       prisma.ticket.update.mockResolvedValue(updated);

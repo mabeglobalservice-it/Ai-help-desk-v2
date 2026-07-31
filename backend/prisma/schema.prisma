@@ -109,6 +109,7 @@ model Ticket {
   slaBreachNotifiedAt DateTime?          @map("sla_breach_notified_at")
   createdAt           DateTime           @default(now()) @map("created_at")
   resolvedAt          DateTime?          @map("resolved_at")
+  resolutionNote      String?            @map("resolution_note")
   rating              Int?
   ratingComment       String?            @map("rating_comment")
   ratedAt             DateTime?          @map("rated_at")
