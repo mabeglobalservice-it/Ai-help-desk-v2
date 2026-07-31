@@ -11,14 +11,18 @@ import {
   downloadAttachment,
   getAttachments,
   getComments,
+  getPriorities,
   getTicket,
+  getTicketCategories,
   getUsers,
   rateTicket,
   suggestTechnician,
   updateTicket,
   uploadAttachment,
   type AdminUser,
+  type Priority,
   type TicketAttachment,
+  type TicketCategory,
   type TicketComment,
   type TicketDetail,
   type TicketStatus,
@@ -116,6 +120,10 @@ export default function TicketDetailPage() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [showResolvePrompt, setShowResolvePrompt] = useState(false);
   const [resolutionNote, setResolutionNote] = useState("");
+  const [categories, setCategories] = useState<TicketCategory[]>([]);
+  const [priorities, setPriorities] = useState<Priority[]>([]);
+  const [triageError, setTriageError] = useState<string | null>(null);
+  const [isSavingTriage, setIsSavingTriage] = useState(false);
   const [selectedTechnicianId, setSelectedTechnicianId] = useState(UNASSIGNED);
   const [assignError, setAssignError] = useState<string | null>(null);
   const [isAssigning, setIsAssigning] = useState(false);
@@ -172,6 +180,22 @@ export default function TicketDetailPage() {
         // best-effort: the assignment dropdown just stays empty
       });
   }, [isPrivileged]);
+
+  // docs/02-brd.md BR-07: le technicien assigné (ou superviseur/admin) peut
+  // corriger manuellement une catégorisation/priorité erronée.
+  useEffect(() => {
+    const token = getToken();
+    if (!token || !user) return;
+
+    Promise.all([getTicketCategories(token), getPriorities(token)])
+      .then(([categoryList, priorityList]) => {
+        setCategories(categoryList);
+        setPriorities(priorityList);
+      })
+      .catch(() => {
+        // best-effort: the triage dropdowns just stay empty
+      });
+  }, [user]);
 
   useEffect(() => {
     // Intentional: resyncs the pending (unsaved) selection to the server's
@@ -267,6 +291,44 @@ export default function TicketDetailPage() {
   function handleCancelResolve() {
     setShowResolvePrompt(false);
     setResolutionNote("");
+  }
+
+  async function handleCategoryChange(newCategoryId: string) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setTriageError(null);
+    setIsSavingTriage(true);
+    try {
+      await updateTicket(token, params.id, { categoryId: newCategoryId });
+      await refreshTicket(token);
+    } catch (err) {
+      setTriageError(err instanceof ApiError ? err.message : "Impossible de changer la catégorie pour le moment.");
+    } finally {
+      setIsSavingTriage(false);
+    }
+  }
+
+  async function handlePriorityChange(newPriorityId: string) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setTriageError(null);
+    setIsSavingTriage(true);
+    try {
+      await updateTicket(token, params.id, { priorityId: newPriorityId });
+      await refreshTicket(token);
+    } catch (err) {
+      setTriageError(err instanceof ApiError ? err.message : "Impossible de changer la priorité pour le moment.");
+    } finally {
+      setIsSavingTriage(false);
+    }
   }
 
   async function handleAssignTechnician() {
@@ -551,16 +613,72 @@ export default function TicketDetailPage() {
                   </div>
                 ) : null}
 
+                {triageError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{triageError}</AlertDescription>
+                  </Alert>
+                ) : null}
+
                 <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
                   <Field label="Référence">
                     <span className="font-mono text-xs">{ticket.reference}</span>
                   </Field>
-                  <Field label="Catégorie">{ticket.category.name}</Field>
+                  <Field label="Catégorie">
+                    {canChangeStatus ? (
+                      <Select
+                        value={ticket.category.id}
+                        onValueChange={(value) => value && handleCategoryChange(value as string)}
+                        disabled={isSavingTriage}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue>
+                            {(value: string | null) =>
+                              categories.find((category) => category.id === value)?.name ??
+                              ticket.category.name
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {categories.map((category) => (
+                            <SelectItem key={category.id} value={category.id}>
+                              {category.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      ticket.category.name
+                    )}
+                  </Field>
                   <Field label="Priorité">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className={`size-1.5 rounded-full ${priorityDotClass(ticket.priority.level)}`} />
-                      {ticket.priority.name}
-                    </span>
+                    {canChangeStatus ? (
+                      <Select
+                        value={ticket.priority.id}
+                        onValueChange={(value) => value && handlePriorityChange(value as string)}
+                        disabled={isSavingTriage}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue>
+                            {(value: string | null) =>
+                              priorities.find((priority) => priority.id === value)?.name ??
+                              ticket.priority.name
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {priorities.map((priority) => (
+                            <SelectItem key={priority.id} value={priority.id}>
+                              {priority.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={`size-1.5 rounded-full ${priorityDotClass(ticket.priority.level)}`} />
+                        {ticket.priority.name}
+                      </span>
+                    )}
                   </Field>
                   <Field label="Équipement concerné">
                     {ticket.ci ? (

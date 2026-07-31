@@ -208,6 +208,8 @@ export interface UpdateTicketInput {
   status?: TicketStatus;
   technicianId?: string;
   resolutionNote?: string;
+  categoryId?: string;
+  priorityId?: string;
 }
 
 export function updateTicket(token: string, id: string, input: UpdateTicketInput): Promise<Ticket> {
