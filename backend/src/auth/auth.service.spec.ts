@@ -18,6 +18,7 @@ describe('AuthService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
       updateMany: jest.Mock;
+      deleteMany: jest.Mock;
     };
   };
   let jwtService: { signAsync: jest.Mock };
@@ -39,6 +40,7 @@ describe('AuthService', () => {
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
     jwtService = { signAsync: jest.fn().mockResolvedValue('signed.jwt.token') };
@@ -196,6 +198,28 @@ describe('AuthService', () => {
         where: { tokenHash: expect.any(String), userId: 'user-1' },
         data: { revoked: true },
       });
+    });
+  });
+
+  // docs/08-schema-base-de-donnees.md §7: purge automatique des sessions/
+  // refresh_tokens expirés
+  describe('purgeExpiredRefreshTokens', () => {
+    it('deletes tokens that are revoked or past their expiry', async () => {
+      await service.purgeExpiredRefreshTokens();
+
+      expect(prisma.refreshToken.deleteMany).toHaveBeenCalledWith({
+        where: {
+          OR: [{ revoked: true }, { expiresAt: { lt: expect.any(Date) } }],
+        },
+      });
+    });
+
+    it('never throws, even if nothing needed purging', async () => {
+      prisma.refreshToken.deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.purgeExpiredRefreshTokens(),
+      ).resolves.toBeUndefined();
     });
   });
 });

@@ -1,6 +1,7 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import * as bcrypt from 'bcrypt';
 import { randomBytes, createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,6 +10,8 @@ const REFRESH_TOKEN_BYTES = 64;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -121,5 +124,22 @@ export class AuthService {
       where: { tokenHash, userId },
       data: { revoked: true },
     });
+  }
+
+  // docs/08-schema-base-de-donnees.md §7: "Sessions / refresh_tokens
+  // expirés — Purge automatique périodique (job planifié)". Safe to delete
+  // outright rather than archive: refresh() rejects a purged token exactly
+  // like a revoked-but-still-present one ("Refresh token invalide ou
+  // expiré"), so purging doesn't change the outcome of a reuse attempt —
+  // it only stops the table from growing unbounded.
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async purgeExpiredRefreshTokens(): Promise<void> {
+    const { count } = await this.prisma.refreshToken.deleteMany({
+      where: { OR: [{ revoked: true }, { expiresAt: { lt: new Date() } }] },
+    });
+
+    if (count > 0) {
+      this.logger.log(`Purged ${count} expired/revoked refresh token(s)`);
+    }
   }
 }
