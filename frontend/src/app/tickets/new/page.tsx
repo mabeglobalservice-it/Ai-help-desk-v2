@@ -7,8 +7,10 @@ import {
   aiDiagnoseTicket,
   ApiError,
   createTicket,
+  getConfigurationItems,
   getPriorities,
   getTicketCategories,
+  type ConfigurationItem,
   type Priority,
   type TicketCategory,
 } from "@/lib/api";
@@ -29,18 +31,22 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+const NO_CI = "NONE";
+
 export default function NewTicketPage() {
   const router = useRouter();
   const user = useSessionUser();
 
   const [categories, setCategories] = useState<TicketCategory[] | null>(null);
   const [priorities, setPriorities] = useState<Priority[] | null>(null);
+  const [configurationItems, setConfigurationItems] = useState<ConfigurationItem[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [priorityId, setPriorityId] = useState("");
+  const [ciId, setCiId] = useState(NO_CI);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -56,10 +62,11 @@ export default function NewTicketPage() {
     }
     if (user?.role !== "EMPLOYEE") return;
 
-    Promise.all([getTicketCategories(token), getPriorities(token)])
-      .then(([categoryList, priorityList]) => {
+    Promise.all([getTicketCategories(token), getPriorities(token), getConfigurationItems(token)])
+      .then(([categoryList, priorityList, ciList]) => {
         setCategories(categoryList);
         setPriorities(priorityList);
+        setConfigurationItems(ciList);
       })
       .catch((err) => {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
@@ -84,11 +91,11 @@ export default function NewTicketPage() {
 
     try {
       await createTicket(token, {
-        employeeId: user.id,
         categoryId,
         priorityId,
         title,
         summary: summary || undefined,
+        ciId: ciId === NO_CI ? undefined : ciId,
       });
       router.push("/tickets");
     } catch (err) {
@@ -248,6 +255,30 @@ export default function NewTicketPage() {
                       {priorities.map((priority) => (
                         <SelectItem key={priority.id} value={priority.id}>
                           {priority.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ci">Équipement concerné (optionnel)</Label>
+                  <Select value={ciId} onValueChange={(value) => setCiId((value as string) ?? NO_CI)}>
+                    <SelectTrigger id="ci" className="w-full">
+                      <SelectValue placeholder="Aucun équipement">
+                        {(value: string | null) =>
+                          value && value !== NO_CI
+                            ? (configurationItems.find((ci) => ci.id === value)?.name ??
+                              "Aucun équipement")
+                            : "Aucun équipement"
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_CI}>Aucun équipement</SelectItem>
+                      {configurationItems.map((ci) => (
+                        <SelectItem key={ci.id} value={ci.id}>
+                          {ci.name} ({ci.inventoryNumber})
                         </SelectItem>
                       ))}
                     </SelectContent>

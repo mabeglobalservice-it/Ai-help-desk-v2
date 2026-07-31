@@ -27,4 +27,10 @@ export class CatalogController {
   findAllDepartments() {
     return this.catalogService.findAllDepartments();
   }
+
+  @ApiOperation({ summary: 'Lister les types de Configuration Item (CMDB)' })
+  @Get('ci-types')
+  findAllCiTypes() {
+    return this.catalogService.findAllCiTypes();
+  }
 }

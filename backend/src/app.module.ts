@@ -10,6 +10,7 @@ import { AuditLogModule } from './audit-log/audit-log.module';
 import { AuthModule } from './auth/auth.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CommentsModule } from './comments/comments.module';
+import { ConfigurationItemsModule } from './configuration-items/configuration-items.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -34,6 +35,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     CatalogModule,
     CommentsModule,
+    ConfigurationItemsModule,
     AttachmentsModule,
     NotificationsModule,
     DashboardModule,

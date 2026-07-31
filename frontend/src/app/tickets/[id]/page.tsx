@@ -486,6 +486,18 @@ export default function TicketDetailPage() {
                       {ticket.priority.name}
                     </span>
                   </Field>
+                  <Field label="Équipement concerné">
+                    {ticket.ci ? (
+                      <>
+                        {ticket.ci.name}
+                        <span className="block text-xs text-muted-foreground">
+                          {ticket.ci.ciType.name} · {ticket.ci.inventoryNumber}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Aucun</span>
+                    )}
+                  </Field>
                   <Field label="Employé">
                     {ticket.employee.displayName}
                     <span className="block text-xs text-muted-foreground">{ticket.employee.email}</span>

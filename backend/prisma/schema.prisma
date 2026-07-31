@@ -90,27 +90,28 @@ model Location {
 }
 
 model Ticket {
-  id                  String         @id @default(uuid())
-  reference           String         @unique
-  employeeId          String         @map("employee_id")
-  employee            User           @relation("EmployeeTickets", fields: [employeeId], references: [id])
-  technicianId        String?        @map("technician_id")
-  technician          User?          @relation("TechnicianTickets", fields: [technicianId], references: [id])
-  categoryId          String         @map("category_id")
-  category            TicketCategory @relation(fields: [categoryId], references: [id])
-  priorityId          String         @map("priority_id")
-  priority            Priority       @relation(fields: [priorityId], references: [id])
-  ciId                String?        @map("ci_id")
+  id                  String             @id @default(uuid())
+  reference           String             @unique
+  employeeId          String             @map("employee_id")
+  employee            User               @relation("EmployeeTickets", fields: [employeeId], references: [id])
+  technicianId        String?            @map("technician_id")
+  technician          User?              @relation("TechnicianTickets", fields: [technicianId], references: [id])
+  categoryId          String             @map("category_id")
+  category            TicketCategory     @relation(fields: [categoryId], references: [id])
+  priorityId          String             @map("priority_id")
+  priority            Priority           @relation(fields: [priorityId], references: [id])
+  ciId                String?            @map("ci_id")
+  ci                  ConfigurationItem? @relation(fields: [ciId], references: [id])
   title               String
   summary             String?
-  status              TicketStatus   @default(NEW)
-  slaDueAt            DateTime?      @map("sla_due_at")
-  slaBreachNotifiedAt DateTime?      @map("sla_breach_notified_at")
-  createdAt           DateTime       @default(now()) @map("created_at")
-  resolvedAt          DateTime?      @map("resolved_at")
+  status              TicketStatus       @default(NEW)
+  slaDueAt            DateTime?          @map("sla_due_at")
+  slaBreachNotifiedAt DateTime?          @map("sla_breach_notified_at")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  resolvedAt          DateTime?          @map("resolved_at")
   rating              Int?
-  ratingComment       String?        @map("rating_comment")
-  ratedAt             DateTime?      @map("rated_at")
+  ratingComment       String?            @map("rating_comment")
+  ratedAt             DateTime?          @map("rated_at")
 
   statusHistory TicketStatusHistory[]
   comments      TicketComment[]
@@ -228,9 +229,20 @@ model TicketStatusHistory {
   @@map("ticket_status_history")
 }
 
+model CiType {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  configurationItems ConfigurationItem[]
+
+  @@map("ci_types")
+}
+
 model ConfigurationItem {
   id              String      @id @default(uuid())
   ciTypeId        String      @map("ci_type_id")
+  ciType          CiType      @relation(fields: [ciTypeId], references: [id])
   name            String
   inventoryNumber String      @unique @map("inventory_number")
   serialNumber    String?     @map("serial_number")
@@ -238,9 +250,11 @@ model ConfigurationItem {
   location        Location?   @relation(fields: [locationId], references: [id])
   criticality     Criticality @default(MEDIUM)
   status          CiStatus    @default(ACTIVE)
+  createdAt       DateTime    @default(now()) @map("created_at")
 
   relationshipsAsParent CiRelationship[] @relation("ParentCi")
   relationshipsAsChild  CiRelationship[] @relation("ChildCi")
+  tickets               Ticket[]
 
   @@map("configuration_items")
 }

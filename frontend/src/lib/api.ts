@@ -162,6 +162,12 @@ export interface Ticket {
   technician: { id: string; displayName: string; email: string } | null;
   category: { id: string; name: string };
   priority: { id: string; name: string; level: number };
+  ci: {
+    id: string;
+    name: string;
+    inventoryNumber: string;
+    ciType: { id: string; name: string };
+  } | null;
 }
 
 export interface TicketsFilter {
@@ -238,6 +244,80 @@ export interface Priority {
 
 export function getPriorities(token: string): Promise<Priority[]> {
   return apiFetch<Priority[]>("/priorities", token);
+}
+
+export interface CiType {
+  id: string;
+  name: string;
+}
+
+export function getCiTypes(token: string): Promise<CiType[]> {
+  return apiFetch<CiType[]>("/ci-types", token);
+}
+
+export type Criticality = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type CiStatus = "ACTIVE" | "IN_REPAIR" | "RETIRED";
+
+export interface ConfigurationItem {
+  id: string;
+  ciTypeId: string;
+  ciType: CiType;
+  name: string;
+  inventoryNumber: string;
+  serialNumber: string | null;
+  criticality: Criticality;
+  status: CiStatus;
+  createdAt: string;
+}
+
+export interface ConfigurationItemDetail extends ConfigurationItem {
+  tickets: {
+    id: string;
+    reference: string;
+    title: string;
+    status: TicketStatus;
+    createdAt: string;
+  }[];
+}
+
+export function getConfigurationItems(token: string): Promise<ConfigurationItem[]> {
+  return apiFetch<ConfigurationItem[]>("/configuration-items", token);
+}
+
+export function getConfigurationItem(token: string, id: string): Promise<ConfigurationItemDetail> {
+  return apiFetch<ConfigurationItemDetail>(`/configuration-items/${id}`, token);
+}
+
+export interface CreateConfigurationItemInput {
+  ciTypeId: string;
+  name: string;
+  inventoryNumber: string;
+  serialNumber?: string;
+  criticality?: Criticality;
+  status?: CiStatus;
+}
+
+export function createConfigurationItem(
+  token: string,
+  input: CreateConfigurationItemInput,
+): Promise<ConfigurationItem> {
+  return apiFetch<ConfigurationItem>("/configuration-items", token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export type UpdateConfigurationItemInput = Partial<CreateConfigurationItemInput>;
+
+export function updateConfigurationItem(
+  token: string,
+  id: string,
+  input: UpdateConfigurationItemInput,
+): Promise<ConfigurationItem> {
+  return apiFetch<ConfigurationItem>(`/configuration-items/${id}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
 }
 
 export interface KnowledgeSearchResult {
@@ -374,11 +454,11 @@ export function updateUser(token: string, id: string, input: UpdateUserInput): P
 }
 
 export interface CreateTicketInput {
-  employeeId: string;
   categoryId: string;
   priorityId: string;
   title: string;
   summary?: string;
+  ciId?: string;
 }
 
 export function createTicket(token: string, input: CreateTicketInput): Promise<Ticket> {

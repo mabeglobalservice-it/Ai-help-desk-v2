@@ -15,9 +15,28 @@ const priorities = [
   { name: 'Urgente', level: 3, slaResolutionHours: 4 },
 ];
 
+// CI types: cf. docs/docs/08-schema-base-de-donnees.md, section 4.3
+const ciTypes = [
+  'Poste de travail',
+  'Serveur',
+  'Application',
+  'Base de données',
+  'Équipement réseau',
+  'Licence',
+  'Service métier',
+];
+
 async function main() {
   for (const name of categories) {
     await prisma.ticketCategory.upsert({
+      where: { name },
+      update: {},
+      create: { name },
+    });
+  }
+
+  for (const name of ciTypes) {
+    await prisma.ciType.upsert({
       where: { name },
       update: {},
       create: { name },

@@ -16,4 +16,8 @@ export class CatalogService {
   findAllDepartments() {
     return this.prisma.department.findMany({ orderBy: { name: 'asc' } });
   }
+
+  findAllCiTypes() {
+    return this.prisma.ciType.findMany({ orderBy: { name: 'asc' } });
+  }
 }

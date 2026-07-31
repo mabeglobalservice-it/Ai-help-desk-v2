@@ -61,6 +61,16 @@ export function AppHeader({ title, action }: AppHeaderProps) {
               SLA
             </Button>
           ) : null}
+          {user && DASHBOARD_ROLES.has(user.role) ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/admin/configuration-items" />}
+            >
+              Inventaire
+            </Button>
+          ) : null}
           {user && KNOWLEDGE_ROLES.has(user.role) ? (
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/knowledge" />}>
               Base de connaissances

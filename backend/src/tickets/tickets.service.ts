@@ -29,6 +29,7 @@ const TICKET_INCLUDE = {
   technician: { select: USER_SAFE_SELECT },
   category: true,
   priority: true,
+  ci: { include: { ciType: true } },
 } as const;
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
