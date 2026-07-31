@@ -234,6 +234,8 @@ describe('TicketsService', () => {
       employeeId: 'emp-1',
       technicianId: null,
       status: TicketStatus.NEW,
+      priorityId: 'prio-faible',
+      createdAt: new Date('2026-01-01T00:00:00Z'),
       statusHistory: [],
     };
 
@@ -339,6 +341,84 @@ describe('TicketsService', () => {
           type: 'TICKET_ASSIGNED',
         }),
       );
+    });
+
+    // docs/02-brd.md BR-07: correcting a miscategorized ticket's priority
+    // must also correct its SLA deadline, not silently keep the old one.
+    describe('SLA recompute on priority change', () => {
+      it('recomputes slaDueAt from the original createdAt using the new priority policy', async () => {
+        prisma.slaPolicy.findUnique.mockResolvedValue({
+          id: 'policy-urgent',
+          priorityId: 'prio-urgente',
+          resolutionHours: 4,
+        });
+        prisma.ticket.update.mockResolvedValue({
+          ...existing,
+          priorityId: 'prio-urgente',
+        });
+
+        await service.update(
+          'tkt-1',
+          { priorityId: 'prio-urgente' },
+          'sup-1',
+          Role.SUPERVISOR,
+        );
+
+        expect(prisma.slaPolicy.findUnique).toHaveBeenCalledWith({
+          where: { priorityId: 'prio-urgente' },
+        });
+        expect(prisma.ticket.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              slaDueAt: new Date(
+                existing.createdAt.getTime() + 4 * 60 * 60 * 1000,
+              ),
+            }),
+          }),
+        );
+      });
+
+      it('sets slaDueAt to null when the new priority has no SLA policy', async () => {
+        prisma.slaPolicy.findUnique.mockResolvedValue(null);
+        prisma.ticket.update.mockResolvedValue({
+          ...existing,
+          priorityId: 'prio-no-policy',
+        });
+
+        await service.update(
+          'tkt-1',
+          { priorityId: 'prio-no-policy' },
+          'sup-1',
+          Role.SUPERVISOR,
+        );
+
+        expect(prisma.ticket.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ slaDueAt: null }),
+          }),
+        );
+      });
+
+      it('does not touch slaDueAt or look up a policy when the priority is unchanged', async () => {
+        prisma.ticket.update.mockResolvedValue({
+          ...existing,
+          title: 'Updated title',
+        });
+
+        await service.update(
+          'tkt-1',
+          { title: 'Updated title' },
+          'sup-1',
+          Role.SUPERVISOR,
+        );
+
+        expect(prisma.slaPolicy.findUnique).not.toHaveBeenCalled();
+        expect(prisma.ticket.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.not.objectContaining({ slaDueAt: expect.anything() }),
+          }),
+        );
+      });
     });
   });
 

@@ -1,5 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
@@ -109,6 +110,14 @@ describe('ConfigurationItems (e2e)', () => {
     await prisma.user.deleteMany({
       where: { email: { in: [employeeEmail, supervisorEmail] } },
     });
+    // @nestjs/schedule never stops its registered cron jobs on app.close()
+    // (SLA breach check, refresh-token purge) — their timers otherwise keep
+    // the process alive past teardown, which can make Jest force-exit a
+    // worker mid-test and corrupt shared DB state for whichever e2e file
+    // was running at the time.
+    for (const job of app.get(SchedulerRegistry).getCronJobs().values()) {
+      await job.stop();
+    }
     await app.close();
   });
 

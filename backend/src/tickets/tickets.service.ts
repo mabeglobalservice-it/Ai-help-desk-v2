@@ -321,6 +321,22 @@ export class TicketsService {
     const isResolved = dto.status === TicketStatus.RESOLVED;
     const isStatusChange = !!dto.status && dto.status !== existing.status;
 
+    // BR-07 correction: a priority change recomputes the SLA deadline from
+    // the ticket's original creation time (not from now) using the new
+    // priority's policy — otherwise correcting a miscategorized ticket to
+    // "Urgente" would silently keep the old, looser deadline. Basing it on
+    // createdAt (rather than resetting the clock to the moment of the
+    // correction) reflects what the deadline would have been had the ticket
+    // been triaged correctly from the start, and isn't gameable by
+    // temporarily lowering then restoring the priority.
+    const isPriorityChange =
+      !!dto.priorityId && dto.priorityId !== existing.priorityId;
+    const newSlaPolicy = isPriorityChange
+      ? await this.prisma.slaPolicy.findUnique({
+          where: { priorityId: dto.priorityId },
+        })
+      : null;
+
     const updated = await this.prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.update({
         where: { id },
@@ -334,6 +350,16 @@ export class TicketsService {
           status: dto.status,
           resolvedAt: isResolved ? new Date() : undefined,
           resolutionNote: dto.resolutionNote,
+          ...(isPriorityChange
+            ? {
+                slaDueAt: newSlaPolicy
+                  ? new Date(
+                      existing.createdAt.getTime() +
+                        newSlaPolicy.resolutionHours * 60 * 60 * 1000,
+                    )
+                  : null,
+              }
+            : {}),
         },
         include: TICKET_INCLUDE,
       });

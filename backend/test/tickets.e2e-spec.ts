@@ -1,5 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { SchedulerRegistry } from '@nestjs/schedule';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
@@ -24,6 +25,7 @@ describe('Tickets (e2e)', () => {
   let assignedTechId: string;
   let categoryId: string;
   let priorityId: string;
+  let urgentPriorityId: string;
   let teamId: string;
 
   let employeeToken: string;
@@ -94,6 +96,14 @@ describe('Tickets (e2e)', () => {
     categoryId = category.id;
     priorityId = priority.id;
 
+    const urgentPriority = await prisma.priority.create({
+      data: { name: 'E2E Urgent Priority', level: 996 },
+    });
+    urgentPriorityId = urgentPriority.id;
+    await prisma.slaPolicy.create({
+      data: { priorityId: urgentPriorityId, resolutionHours: 4 },
+    });
+
     // Scopes the auto-assignment fallback (RM-04's "generalist" path, no
     // team match) to just this fixture's two technicians. Without a team
     // tied to categoryId, that fallback legitimately scans every active
@@ -134,7 +144,19 @@ describe('Tickets (e2e)', () => {
     await prisma.user.deleteMany({ where: { email: { in: userEmails } } });
     await prisma.team.delete({ where: { id: teamId } });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
+    await prisma.slaPolicy.deleteMany({
+      where: { priorityId: urgentPriorityId },
+    });
     await prisma.priority.delete({ where: { id: priorityId } });
+    await prisma.priority.delete({ where: { id: urgentPriorityId } });
+    // @nestjs/schedule never stops its registered cron jobs on app.close()
+    // (SLA breach check, refresh-token purge) — their timers otherwise keep
+    // the process alive past teardown, which can make Jest force-exit a
+    // worker mid-test and corrupt shared DB state for whichever e2e file
+    // was running at the time.
+    for (const job of app.get(SchedulerRegistry).getCronJobs().values()) {
+      await job.stop();
+    }
     await app.close();
   });
 
@@ -156,6 +178,39 @@ describe('Tickets (e2e)', () => {
     expect(res.body.employee.id).toBe(employeeId);
     expect(res.body.technician.id).toBe(assignedTechId);
     ticketId = res.body.id;
+  });
+
+  // docs/02-brd.md BR-07: correcting the priority must also correct the SLA
+  // deadline (recomputed from the ticket's original creation time), not
+  // silently keep the deadline the wrong priority produced.
+  it('recomputes the SLA deadline from createdAt when the priority is corrected', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/tickets')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({
+        categoryId,
+        priorityId, // "E2E Test Priority" has no SLA policy: slaDueAt starts null
+        technicianId: assignedTechId,
+        title: 'E2E: ticket mal priorisé, à corriger',
+      })
+      .expect(201);
+
+    expect(created.body.slaDueAt).toBeNull();
+    const createdAt = new Date(created.body.createdAt).getTime();
+
+    const res = await request(app.getHttpServer())
+      .patch(`/tickets/${created.body.id}`)
+      .set('Authorization', `Bearer ${assignedTechToken}`)
+      .send({ priorityId: urgentPriorityId })
+      .expect(200);
+
+    expect(res.body.priority.id).toBe(urgentPriorityId);
+    expect(res.body.slaDueAt).not.toBeNull();
+    expect(new Date(res.body.slaDueAt).getTime()).toBe(
+      createdAt + 4 * 60 * 60 * 1000,
+    );
+
+    await prisma.ticket.delete({ where: { id: created.body.id } });
   });
 
   it('ignores a spoofed employeeId in the request body and always uses the authenticated requester (IDOR fix)', async () => {
