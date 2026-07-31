@@ -1,13 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import {
   NotificationType,
   Role,
   TicketStatus,
 } from '../../generated/prisma/client';
+import { UpdateSlaPolicyDto } from './dto/update-sla-policy.dto';
 
 @Injectable()
 export class SlaService {
@@ -17,7 +19,53 @@ export class SlaService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly auditLogService: AuditLogService,
   ) {}
+
+  // docs/06-cas-utilisation.md UC-020: le superviseur consulte le delai de
+  // resolution attendu par priorite avant de l'ajuster.
+  findAllPolicies() {
+    return this.prisma.slaPolicy.findMany({
+      include: { priority: true },
+      orderBy: { priority: { level: 'asc' } },
+    });
+  }
+
+  // UC-020: seul le delai de resolution est ajustable ; la priorite et son
+  // niveau restent fixes (definis via le catalogue). Le nouveau seuil ne
+  // s'applique qu'aux tickets crees ensuite (les slaDueAt deja calcules ne
+  // sont pas retroactivement recalcules).
+  async updatePolicy(
+    priorityId: string,
+    dto: UpdateSlaPolicyDto,
+    actorId: string,
+  ) {
+    const before = await this.prisma.slaPolicy.findUnique({
+      where: { priorityId },
+    });
+    if (!before) {
+      throw new NotFoundException(
+        `Aucune politique SLA pour la priorité ${priorityId}`,
+      );
+    }
+
+    const updated = await this.prisma.slaPolicy.update({
+      where: { priorityId },
+      data: { resolutionHours: dto.resolutionHours },
+      include: { priority: true },
+    });
+
+    await this.auditLogService.record({
+      actorId,
+      action: 'SLA_POLICY_UPDATED',
+      targetType: 'SlaPolicy',
+      targetId: updated.id,
+      beforeState: { resolutionHours: before.resolutionHours },
+      afterState: { resolutionHours: updated.resolutionHours },
+    });
+
+    return updated;
+  }
 
   // Finds tickets whose SLA deadline has passed without being resolved and
   // haven't been notified yet, notifies every active SUPERVISOR/ADMIN once

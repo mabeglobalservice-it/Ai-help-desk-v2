@@ -240,6 +240,29 @@ export function getPriorities(token: string): Promise<Priority[]> {
   return apiFetch<Priority[]>("/priorities", token);
 }
 
+export interface SlaPolicy {
+  id: string;
+  priorityId: string;
+  priority: Priority;
+  resolutionHours: number;
+  createdAt: string;
+}
+
+export function getSlaPolicies(token: string): Promise<SlaPolicy[]> {
+  return apiFetch<SlaPolicy[]>("/sla-policies", token);
+}
+
+export function updateSlaPolicy(
+  token: string,
+  priorityId: string,
+  resolutionHours: number,
+): Promise<SlaPolicy> {
+  return apiFetch<SlaPolicy>(`/sla-policies/${priorityId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ resolutionHours }),
+  });
+}
+
 export interface Department {
   id: string;
   name: string;

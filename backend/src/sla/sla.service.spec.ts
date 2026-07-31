@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { SlaService } from './sla.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { TicketStatus } from '../../generated/prisma/client';
 
 describe('SlaService', () => {
@@ -11,10 +13,16 @@ describe('SlaService', () => {
     ticket: { findMany: jest.Mock; update: jest.Mock };
     user: { findMany: jest.Mock };
     ticketStatusHistory: { create: jest.Mock };
+    slaPolicy: {
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
     $transaction: jest.Mock;
   };
   let notificationsService: { create: jest.Mock };
   let realtimeGateway: { emitToUser: jest.Mock };
+  let auditLogService: { record: jest.Mock };
 
   const breachedNewTicket = {
     id: 'tkt-1',
@@ -37,10 +45,16 @@ describe('SlaService', () => {
       ticket: { findMany: jest.fn(), update: jest.fn() },
       user: { findMany: jest.fn().mockResolvedValue([{ id: 'sup-1' }]) },
       ticketStatusHistory: { create: jest.fn() },
+      slaPolicy: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
       $transaction: jest.fn().mockResolvedValue(undefined),
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     realtimeGateway = { emitToUser: jest.fn() };
+    auditLogService = { record: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -48,6 +62,7 @@ describe('SlaService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notificationsService },
         { provide: RealtimeGateway, useValue: realtimeGateway },
+        { provide: AuditLogService, useValue: auditLogService },
       ],
     }).compile();
 
@@ -161,5 +176,57 @@ describe('SlaService', () => {
 
     await expect(service.checkAndNotifyBreaches()).resolves.toBeUndefined();
     expect(prisma.ticket.update).not.toHaveBeenCalled();
+  });
+
+  // docs/06-cas-utilisation.md UC-020
+  describe('updatePolicy', () => {
+    it('throws NotFoundException when the priority has no SLA policy', async () => {
+      prisma.slaPolicy.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updatePolicy(
+          'missing-priority',
+          { resolutionHours: 4 },
+          'sup-1',
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('updates the resolution hours and records an audit log entry', async () => {
+      prisma.slaPolicy.findUnique.mockResolvedValue({
+        id: 'policy-1',
+        priorityId: 'prio-urgent',
+        resolutionHours: 4,
+      });
+      prisma.slaPolicy.update.mockResolvedValue({
+        id: 'policy-1',
+        priorityId: 'prio-urgent',
+        resolutionHours: 1,
+      });
+
+      const result = await service.updatePolicy(
+        'prio-urgent',
+        { resolutionHours: 1 },
+        'sup-1',
+      );
+
+      expect(prisma.slaPolicy.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { priorityId: 'prio-urgent' },
+          data: { resolutionHours: 1 },
+        }),
+      );
+      expect(auditLogService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'sup-1',
+          action: 'SLA_POLICY_UPDATED',
+          targetType: 'SlaPolicy',
+          targetId: 'policy-1',
+          beforeState: { resolutionHours: 4 },
+          afterState: { resolutionHours: 1 },
+        }),
+      );
+      expect(result.resolutionHours).toBe(1);
+    });
   });
 });
