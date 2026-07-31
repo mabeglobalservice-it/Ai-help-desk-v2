@@ -11,6 +11,7 @@ import { AuthModule } from './auth/auth.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CommentsModule } from './comments/comments.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -39,6 +40,7 @@ import { UsersModule } from './users/users.module';
     TeamsModule,
     AuditLogModule,
     RealtimeModule,
+    KnowledgeModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

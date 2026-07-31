@@ -240,6 +240,23 @@ export function getPriorities(token: string): Promise<Priority[]> {
   return apiFetch<Priority[]>("/priorities", token);
 }
 
+export interface KnowledgeSearchResult {
+  id: string;
+  reference: string;
+  title: string;
+  summary: string | null;
+  resolvedAt: string | null;
+  categoryName: string;
+  priorityName: string;
+  rank: number;
+  snippet: string;
+}
+
+export function searchKnowledge(token: string, q: string): Promise<KnowledgeSearchResult[]> {
+  const params = new URLSearchParams({ q });
+  return apiFetch<KnowledgeSearchResult[]>(`/knowledge/search?${params.toString()}`, token);
+}
+
 export interface SlaPolicy {
   id: string;
   priorityId: string;
