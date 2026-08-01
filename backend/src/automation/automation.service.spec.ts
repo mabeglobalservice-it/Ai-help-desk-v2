@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { AiService } from '../ai/ai.service';
 import {
   ApprovalStatus,
   AutomationRunStatus,
@@ -18,7 +19,8 @@ import {
 describe('AutomationService', () => {
   let service: AutomationService;
   let prisma: {
-    script: { findUnique: jest.Mock; create: jest.Mock };
+    script: { findUnique: jest.Mock; findMany: jest.Mock; create: jest.Mock };
+    ticket: { findUnique: jest.Mock };
     automationRun: {
       create: jest.Mock;
       update: jest.Mock;
@@ -36,6 +38,7 @@ describe('AutomationService', () => {
   let notificationsService: { create: jest.Mock };
   let auditLogService: { record: jest.Mock };
   let realtimeGateway: { emitToUser: jest.Mock };
+  let aiService: { suggestAutomationForTicket: jest.Mock };
 
   const nonSensitiveScript = {
     id: 'script-1',
@@ -61,7 +64,8 @@ describe('AutomationService', () => {
 
   beforeEach(async () => {
     prisma = {
-      script: { findUnique: jest.fn(), create: jest.fn() },
+      script: { findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn() },
+      ticket: { findUnique: jest.fn() },
       automationRun: {
         create: jest.fn(),
         update: jest.fn(),
@@ -79,6 +83,7 @@ describe('AutomationService', () => {
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     auditLogService = { record: jest.fn().mockResolvedValue(undefined) };
     realtimeGateway = { emitToUser: jest.fn() };
+    aiService = { suggestAutomationForTicket: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -87,6 +92,7 @@ describe('AutomationService', () => {
         { provide: NotificationsService, useValue: notificationsService },
         { provide: AuditLogService, useValue: auditLogService },
         { provide: RealtimeGateway, useValue: realtimeGateway },
+        { provide: AiService, useValue: aiService },
       ],
     }).compile();
 
@@ -182,6 +188,69 @@ describe('AutomationService', () => {
       );
       expect(notificationsService.create).toHaveBeenCalledTimes(2);
       expect(result.status).toBe(AutomationRunStatus.PENDING_APPROVAL);
+    });
+  });
+
+  // docs/05-user-stories.md US-28: pre-selects a script + justification
+  // from the ticket's own context, never executes or requests anything.
+  describe('suggestScriptForTicket', () => {
+    it('throws NotFoundException when the ticket does not exist', async () => {
+      prisma.ticket.findUnique.mockResolvedValue(null);
+      prisma.script.findMany.mockResolvedValue([]);
+
+      await expect(service.suggestScriptForTicket('missing')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException when AiService finds nothing relevant', async () => {
+      prisma.ticket.findUnique.mockResolvedValue({
+        id: 'tkt-1',
+        title: 'Imprimante bloquée',
+        summary: 'La file est bloquée',
+        category: { name: 'Matériel' },
+      });
+      prisma.script.findMany.mockResolvedValue([sensitiveScript]);
+      aiService.suggestAutomationForTicket.mockResolvedValue(null);
+
+      await expect(service.suggestScriptForTicket('tkt-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('returns the suggested script id, name, and justification', async () => {
+      prisma.ticket.findUnique.mockResolvedValue({
+        id: 'tkt-1',
+        title: 'Compte verrouillé après 5 tentatives',
+        summary: null,
+        category: { name: 'Accès' },
+      });
+      prisma.script.findMany.mockResolvedValue([sensitiveScript]);
+      aiService.suggestAutomationForTicket.mockResolvedValue({
+        scriptId: sensitiveScript.id,
+        justification: 'Compte verrouillé après 5 tentatives',
+        degraded: true,
+      });
+
+      const result = await service.suggestScriptForTicket('tkt-1');
+
+      expect(aiService.suggestAutomationForTicket).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Compte verrouillé après 5 tentatives',
+          categoryName: 'Accès',
+        }),
+        [
+          expect.objectContaining({
+            id: sensitiveScript.id,
+            name: sensitiveScript.name,
+          }),
+        ],
+      );
+      expect(result).toEqual({
+        scriptId: sensitiveScript.id,
+        scriptName: sensitiveScript.name,
+        justification: 'Compte verrouillé après 5 tentatives',
+      });
     });
   });
 

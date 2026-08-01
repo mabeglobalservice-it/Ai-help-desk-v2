@@ -18,6 +18,7 @@ import {
   getUsers,
   rateTicket,
   requestAutomationRun,
+  suggestAutomation,
   suggestTechnician,
   updateTicket,
   uploadAttachment,
@@ -146,6 +147,9 @@ export default function TicketDetailPage() {
   const [automationError, setAutomationError] = useState<string | null>(null);
   const [isRequestingAutomation, setIsRequestingAutomation] = useState(false);
   const [lastRunResult, setLastRunResult] = useState<AutomationRun | null>(null);
+  const [automationSuggestionInfo, setAutomationSuggestionInfo] = useState<string | null>(null);
+  const [automationSuggestError, setAutomationSuggestError] = useState<string | null>(null);
+  const [isSuggestingAutomation, setIsSuggestingAutomation] = useState(false);
 
   useEffect(() => {
     const token = getToken();
@@ -249,6 +253,39 @@ export default function TicketDetailPage() {
   async function refreshTicket(token: string) {
     const ticketData = await getTicket(token, params.id);
     setTicket(ticketData);
+  }
+
+  // docs/05-user-stories.md US-28: pré-remplit le script et la justification
+  // à partir du contexte du ticket — le technicien reste libre de les
+  // modifier ou de les ignorer avant de proposer l'action.
+  async function handleSuggestAutomation() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setAutomationSuggestError(null);
+    setAutomationSuggestionInfo(null);
+    setIsSuggestingAutomation(true);
+    try {
+      const suggestion = await suggestAutomation(token, params.id);
+      setSelectedScriptId(suggestion.scriptId);
+      setAutomationJustification(suggestion.justification);
+      setAutomationSuggestionInfo(
+        `Suggestion : ${suggestion.scriptName ?? "script"} — vérifiez avant de proposer.`,
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setAutomationSuggestError("Aucune suggestion disponible pour ce ticket.");
+      } else {
+        setAutomationSuggestError(
+          err instanceof ApiError ? err.message : "Impossible de suggérer une action pour le moment.",
+        );
+      }
+    } finally {
+      setIsSuggestingAutomation(false);
+    }
   }
 
   async function handleRequestAutomation(event: FormEvent<HTMLFormElement>) {
@@ -900,6 +937,23 @@ export default function TicketDetailPage() {
                     <p className="text-sm text-muted-foreground">Aucun script disponible pour le moment.</p>
                   ) : (
                     <form onSubmit={handleRequestAutomation} className="space-y-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSuggestAutomation}
+                        disabled={isSuggestingAutomation}
+                      >
+                        {isSuggestingAutomation ? "Suggestion..." : "Suggérer une action"}
+                      </Button>
+                      {automationSuggestionInfo ? (
+                        <p className="text-xs text-muted-foreground">{automationSuggestionInfo}</p>
+                      ) : null}
+                      {automationSuggestError ? (
+                        <Alert>
+                          <AlertDescription>{automationSuggestError}</AlertDescription>
+                        </Alert>
+                      ) : null}
                       <div className="space-y-1.5">
                         <Label htmlFor="automation-script">Script</Label>
                         <Select value={selectedScriptId} onValueChange={(value) => setSelectedScriptId(value ?? "")}>

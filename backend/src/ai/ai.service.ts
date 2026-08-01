@@ -48,6 +48,45 @@ const ARTICLE_SYSTEM_PROMPT =
   'similaire : un titre clair et un contenu structuré en deux parties, "Cause probable" et ' +
   '"Solution appliquée". Reste factuel, ne generalise pas au-delà de ce que le ticket décrit.';
 
+// docs/05-user-stories.md US-28: "le système prépare une action ... afin de
+// gagner du temps sur la saisie manuelle" — jamais une exécution directe
+// (l'Agent Diagnostic "ne peut jamais initier une automatisation
+// directement", docs/09-architecture-agents-ia.md §3.1) : seulement une
+// pré-sélection de script + justification que le technicien reste libre de
+// modifier ou d'ignorer avant de la proposer (docs/06 RM-01, module
+// Automation déjà construit).
+const AUTOMATION_SUGGESTION_SYSTEM_PROMPT =
+  "Tu assistes un technicien de support informatique interne. À partir du contexte d'un " +
+  "ticket et de la liste des scripts d'automatisation disponibles, indique lequel (s'il y en " +
+  'a un) correspond réellement au problème décrit, et rédige une justification courte et ' +
+  'factuelle basée sur le ticket. Ne force jamais une correspondance approximative : si aucun ' +
+  'script ne correspond clairement, réponds avec scriptId "aucun".';
+
+interface AutomationSuggestionResponse {
+  scriptId: string;
+  justification: string;
+}
+
+export interface ScriptOption {
+  id: string;
+  name: string;
+  content: string;
+}
+
+export interface TicketContextForAutomation {
+  title: string;
+  summary: string | null;
+  categoryName: string;
+}
+
+export interface AutomationSuggestion {
+  scriptId: string;
+  justification: string;
+  degraded: boolean;
+}
+
+const NO_SUGGESTION = 'aucun';
+
 export interface TicketDiagnosis {
   title: string;
   categoryId: string;
@@ -487,6 +526,139 @@ export class AiService {
     return {
       title: input.title,
       content: lines.join('\n'),
+      degraded: true,
+    };
+  }
+
+  // docs/05-user-stories.md US-28. Returns null when nothing in the
+  // provided catalog plausibly matches — the technician then picks a
+  // script manually, exactly as before this feature existed.
+  async suggestAutomationForTicket(
+    ticket: TicketContextForAutomation,
+    scripts: ScriptOption[],
+  ): Promise<AutomationSuggestion | null> {
+    if (scripts.length === 0) return null;
+
+    if (!this.client) {
+      this.logger.warn(
+        "Clé API Anthropic absente : suggestion d'automatisation en mode dégradé (mots-clés locaux)",
+      );
+      return this.localSuggestAutomation(ticket, scripts);
+    }
+
+    try {
+      return await this.aiSuggestAutomation(this.client, ticket, scripts);
+    } catch (error) {
+      this.logger.error(
+        "Échec de la suggestion IA d'automatisation, repli en mode dégradé (mots-clés locaux)",
+        error,
+      );
+      return this.localSuggestAutomation(ticket, scripts);
+    }
+  }
+
+  private async aiSuggestAutomation(
+    client: Anthropic,
+    ticket: TicketContextForAutomation,
+    scripts: ScriptOption[],
+  ): Promise<AutomationSuggestion | null> {
+    const scriptList = scripts
+      .map((script) => `- ${script.id}: ${script.name} — ${script.content}`)
+      .join('\n');
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 512,
+      system: AUTOMATION_SUGGESTION_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Titre du ticket : ${ticket.title}\n` +
+            `Catégorie : ${ticket.categoryName}\n` +
+            `Description : ${ticket.summary ?? '(non fournie)'}\n\n` +
+            `Scripts disponibles :\n${scriptList}`,
+        },
+      ],
+      tools: [
+        {
+          name: 'suggest_automation_script',
+          description:
+            'Indique le script d\'automatisation le plus pertinent pour ce ticket, ou "aucun"',
+          input_schema: {
+            type: 'object',
+            properties: {
+              scriptId: {
+                type: 'string',
+                enum: [...scripts.map((script) => script.id), NO_SUGGESTION],
+                description:
+                  'L\'identifiant du script le plus pertinent, ou "aucun" si rien ne correspond',
+              },
+              justification: {
+                type: 'string',
+                description:
+                  'Justification courte et factuelle basée sur le ticket (vide si scriptId est "aucun")',
+              },
+            },
+            required: ['scriptId', 'justification'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'suggest_automation_script' },
+    });
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+    );
+
+    if (!toolUse) {
+      throw new Error(
+        "Réponse de l'IA inattendue : aucune suggestion structurée reçue",
+      );
+    }
+
+    const suggestion = toolUse.input as AutomationSuggestionResponse;
+
+    if (
+      !suggestion.scriptId ||
+      suggestion.scriptId === NO_SUGGESTION ||
+      !scripts.some((script) => script.id === suggestion.scriptId)
+    ) {
+      return null;
+    }
+
+    return {
+      scriptId: suggestion.scriptId,
+      justification: suggestion.justification?.trim() || ticket.title,
+      degraded: false,
+    };
+  }
+
+  private localSuggestAutomation(
+    ticket: TicketContextForAutomation,
+    scripts: ScriptOption[],
+  ): AutomationSuggestion | null {
+    const normalizedText = normalize(`${ticket.title} ${ticket.summary ?? ''}`);
+
+    let best: ScriptOption | null = null;
+    let bestScore = 0;
+
+    for (const script of scripts) {
+      const words = normalize(script.name)
+        .split(/\W+/)
+        .filter((word) => word.length >= 4);
+      const score = countMatches(normalizedText, words);
+      if (score > bestScore) {
+        best = script;
+        bestScore = score;
+      }
+    }
+
+    if (!best) return null;
+
+    return {
+      scriptId: best.id,
+      justification: ticket.summary?.trim() || ticket.title,
       degraded: true,
     };
   }

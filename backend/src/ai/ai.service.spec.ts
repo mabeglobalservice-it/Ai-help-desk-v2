@@ -54,4 +54,57 @@ describe('AiService', () => {
       expect(draft.content).toContain('(non renseignée)');
     });
   });
+
+  // docs/05-user-stories.md US-28
+  describe('suggestAutomationForTicket', () => {
+    const scripts = [
+      {
+        id: 'script-dns',
+        name: 'Vider le cache DNS',
+        content: 'Clear-DnsClientCache',
+      },
+      {
+        id: 'script-password',
+        name: 'Réinitialiser le mot de passe',
+        content: 'Set-ADAccountPassword',
+      },
+    ];
+
+    it('returns null immediately when no scripts are available', async () => {
+      const result = await service.suggestAutomationForTicket(
+        { title: 'Compte verrouillé', summary: null, categoryName: 'Accès' },
+        [],
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it('matches the script whose name overlaps with the ticket text (degraded mode)', async () => {
+      const result = await service.suggestAutomationForTicket(
+        {
+          title: 'Mot de passe oublié, compte verrouillé',
+          summary: 'Utilisateur bloqué après plusieurs tentatives',
+          categoryName: 'Accès',
+        },
+        scripts,
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.scriptId).toBe('script-password');
+      expect(result?.degraded).toBe(true);
+    });
+
+    it('returns null when nothing in the ticket text overlaps with any script name', async () => {
+      const result = await service.suggestAutomationForTicket(
+        {
+          title: 'Question générale sur la politique de télétravail',
+          summary: null,
+          categoryName: 'Logiciel',
+        },
+        scripts,
+      );
+
+      expect(result).toBeNull();
+    });
+  });
 });

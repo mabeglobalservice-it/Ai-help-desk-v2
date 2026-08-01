@@ -807,6 +807,18 @@ export function getAutomationRun(token: string, id: string): Promise<AutomationR
   return apiFetch<AutomationRun>(`/automation/runs/${id}`, token);
 }
 
+// docs/05-user-stories.md US-28 : prépare (ne demande ni n'exécute jamais)
+// un script + justification à partir du contexte du ticket.
+export interface AutomationSuggestion {
+  scriptId: string;
+  scriptName?: string;
+  justification: string;
+}
+
+export function suggestAutomation(token: string, ticketId: string): Promise<AutomationSuggestion> {
+  return apiFetch<AutomationSuggestion>(`/automation/suggest/${ticketId}`, token);
+}
+
 export function getPendingApprovals(token: string): Promise<PendingApproval[]> {
   return apiFetch<PendingApproval[]>("/automation/approvals/pending", token);
 }

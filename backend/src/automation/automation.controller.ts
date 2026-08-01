@@ -50,6 +50,17 @@ export class AutomationController {
   }
 
   @ApiOperation({
+    summary: 'Suggère un script et une justification pour ce ticket (US-28)',
+    description:
+      "Réservé au rôle TECHNICIAN — prépare (ne demande ni n'exécute jamais) une action à partir du contexte du ticket, que le technicien reste libre de modifier avant de la proposer via POST /automation/runs",
+  })
+  @Roles(Role.TECHNICIAN)
+  @Get('suggest/:ticketId')
+  suggestScriptForTicket(@Param('ticketId') ticketId: string) {
+    return this.automationService.suggestScriptForTicket(ticketId);
+  }
+
+  @ApiOperation({
     summary: "Demander l'exécution d'un script",
     description:
       'Réservé au rôle TECHNICIAN — déclenche une approbation si le script est sensible (RM-01)',

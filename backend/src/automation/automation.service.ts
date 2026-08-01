@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { AiService } from '../ai/ai.service';
 import {
   ActorType,
   ApprovalStatus,
@@ -43,10 +44,53 @@ export class AutomationService {
     private readonly notificationsService: NotificationsService,
     private readonly auditLogService: AuditLogService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly aiService: AiService,
   ) {}
 
   findAllScripts() {
     return this.prisma.script.findMany({ orderBy: { name: 'asc' } });
+  }
+
+  // docs/05-user-stories.md US-28: prepares (pre-selects) a script and
+  // justification from the ticket's own context so a technician isn't
+  // typing it from scratch — never executes or requests anything by
+  // itself; the technician still reviews and submits via requestRun().
+  async suggestScriptForTicket(ticketId: string) {
+    const [ticket, scripts] = await Promise.all([
+      this.prisma.ticket.findUnique({
+        where: { id: ticketId },
+        include: { category: true },
+      }),
+      this.prisma.script.findMany(),
+    ]);
+
+    if (!ticket) {
+      throw new NotFoundException(`Ticket ${ticketId} introuvable`);
+    }
+
+    const suggestion = await this.aiService.suggestAutomationForTicket(
+      {
+        title: ticket.title,
+        summary: ticket.summary,
+        categoryName: ticket.category.name,
+      },
+      scripts.map((script) => ({
+        id: script.id,
+        name: script.name,
+        content: script.content,
+      })),
+    );
+
+    if (!suggestion) {
+      throw new NotFoundException('Aucune action à suggérer pour ce ticket');
+    }
+
+    const script = scripts.find((s) => s.id === suggestion.scriptId);
+    return {
+      scriptId: suggestion.scriptId,
+      scriptName: script?.name,
+      justification: suggestion.justification,
+    };
   }
 
   async createScript(dto: CreateScriptDto, adminId: string) {

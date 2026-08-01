@@ -11,6 +11,7 @@ import {
   AutomationRunStatus,
   Role,
   ScriptLanguage,
+  TicketStatus,
 } from '../generated/prisma/client';
 
 // docs/06-cas-utilisation.md UC-014/UC-022, docs/09-architecture-agents-ia.md
@@ -38,6 +39,10 @@ describe('Automation (e2e)', () => {
 
   let nonSensitiveScriptId: string;
   let sensitiveScriptId: string;
+  let categoryId: string;
+  let priorityId: string;
+  let accountTicketId: string;
+  let unrelatedTicketId: string;
 
   async function loginAs(email: string): Promise<string> {
     const res = await request(app.getHttpServer())
@@ -104,6 +109,49 @@ describe('Automation (e2e)', () => {
     requesterId = requester.id;
     habiliteId = habilite.id;
 
+    const [category, priority] = await Promise.all([
+      prisma.ticketCategory.create({
+        data: { name: 'E2E Automation Category' },
+      }),
+      prisma.priority.create({
+        data: { name: 'E2E Automation Priority', level: 995 },
+      }),
+    ]);
+    categoryId = category.id;
+    priorityId = priority.id;
+
+    // docs/05-user-stories.md US-28 fixtures. employeeId reuses the
+    // requester technician's id: RM-04 ownership isn't what's under test
+    // here, only the suggestion logic, so a dedicated employee user isn't
+    // needed.
+    const [accountTicket, unrelatedTicket] = await Promise.all([
+      prisma.ticket.create({
+        data: {
+          reference: 'TCK-E2E-AUTOMATION-SUGGEST-0001',
+          employeeId: requesterId,
+          categoryId,
+          priorityId,
+          title: 'Mot de passe oublié, compte verrouillé',
+          summary:
+            'Utilisateur bloqué après plusieurs tentatives de connexion.',
+          status: TicketStatus.NEW,
+        },
+      }),
+      prisma.ticket.create({
+        data: {
+          reference: 'TCK-E2E-AUTOMATION-SUGGEST-0002',
+          employeeId: requesterId,
+          categoryId,
+          priorityId,
+          title: 'Question générale sur la politique de télétravail',
+          summary: 'Aucun rapport avec un script disponible.',
+          status: TicketStatus.NEW,
+        },
+      }),
+    ]);
+    accountTicketId = accountTicket.id;
+    unrelatedTicketId = unrelatedTicket.id;
+
     [requesterToken, habiliteToken, plainTechToken, adminToken] =
       await Promise.all([
         loginAs(requesterEmail),
@@ -124,6 +172,11 @@ describe('Automation (e2e)', () => {
       await prisma.script.deleteMany({ where: { id: nonSensitiveScriptId } });
     if (sensitiveScriptId)
       await prisma.script.deleteMany({ where: { id: sensitiveScriptId } });
+    await prisma.ticket.deleteMany({
+      where: { id: { in: [accountTicketId, unrelatedTicketId] } },
+    });
+    await prisma.ticketCategory.delete({ where: { id: categoryId } });
+    await prisma.priority.delete({ where: { id: priorityId } });
 
     const userEmails = [
       requesterEmail,
@@ -180,6 +233,35 @@ describe('Automation (e2e)', () => {
     sensitiveScriptId = sensitive.body.id;
     // isSensitive defaults to true server-side when omitted (RM-01).
     expect(sensitive.body.isSensitive).toBe(true);
+  });
+
+  // docs/05-user-stories.md US-28. Timeout raised: hits the real Anthropic
+  // API (or falls back locally), slower than Jest's 5s default.
+  describe('suggest (US-28)', () => {
+    it('suggests the matching script and a justification for an account-related ticket', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/automation/suggest/${accountTicketId}`)
+        .set('Authorization', `Bearer ${requesterToken}`)
+        .expect(200);
+
+      expect(res.body.scriptId).toBe(sensitiveScriptId);
+      expect(typeof res.body.justification).toBe('string');
+      expect(res.body.justification.length).toBeGreaterThan(0);
+    }, 30000);
+
+    it('returns 404 when nothing matches the ticket', async () => {
+      await request(app.getHttpServer())
+        .get(`/automation/suggest/${unrelatedTicketId}`)
+        .set('Authorization', `Bearer ${requesterToken}`)
+        .expect(404);
+    }, 30000);
+
+    it('forbids a non-TECHNICIAN from requesting a suggestion', async () => {
+      await request(app.getHttpServer())
+        .get(`/automation/suggest/${accountTicketId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(403);
+    });
   });
 
   it('lists scripts for a TECHNICIAN', async () => {
