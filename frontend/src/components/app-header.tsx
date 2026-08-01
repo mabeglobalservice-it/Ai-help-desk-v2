@@ -12,6 +12,7 @@ import { NotificationsBell } from "@/components/notifications-bell";
 
 const DASHBOARD_ROLES = new Set(["SUPERVISOR", "ADMIN"]);
 const KNOWLEDGE_ROLES = new Set(["TECHNICIAN", "SUPERVISOR", "ADMIN"]);
+const APPROVAL_ROLES = new Set(["TECHNICIAN", "SUPERVISOR", "ADMIN"]);
 
 interface AppHeaderProps {
   title: string;
@@ -74,6 +75,26 @@ export function AppHeader({ title, action }: AppHeaderProps) {
           {user && KNOWLEDGE_ROLES.has(user.role) ? (
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/knowledge" />}>
               Base de connaissances
+            </Button>
+          ) : null}
+          {user && APPROVAL_ROLES.has(user.role) ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/automation/approvals" />}
+            >
+              Approbations
+            </Button>
+          ) : null}
+          {user && user.role === "ADMIN" ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              nativeButton={false}
+              render={<Link href="/admin/automation-scripts" />}
+            >
+              Scripts
             </Button>
           ) : null}
           {user && user.role === "ADMIN" ? (

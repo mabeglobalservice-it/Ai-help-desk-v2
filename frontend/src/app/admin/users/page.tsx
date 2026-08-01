@@ -193,6 +193,28 @@ export default function AdminUsersPage() {
     }
   }
 
+  // docs/06-cas-utilisation.md UC-022: un TECHNICIAN "habilité" peut
+  // approuver les actions sensibles du module Automation, au même titre
+  // qu'un SUPERVISOR (qui l'est toujours, sans besoin de ce drapeau).
+  async function handleToggleApproval(targetUser: AdminUser) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setRowError(null);
+    try {
+      await updateUser(token, targetUser.id, {
+        canApproveAutomations: !targetUser.canApproveAutomations,
+      });
+      await loadUsers(token);
+    } catch (err) {
+      setRowError(
+        err instanceof ApiError ? err.message : "Impossible de modifier ce droit pour le moment.",
+      );
+    }
+  }
+
   if (user && user.role !== "ADMIN") {
     return (
       <div className="min-h-screen bg-background">
@@ -360,6 +382,7 @@ export default function AdminUsersPage() {
                         <TableHead>Département</TableHead>
                         <TableHead>Équipe</TableHead>
                         <TableHead>Statut</TableHead>
+                        <TableHead>Approbations</TableHead>
                         <TableHead>Créé le</TableHead>
                         <TableHead />
                       </TableRow>
@@ -419,6 +442,19 @@ export default function AdminUsersPage() {
                             <Badge variant={rowUser.isActive ? "secondary" : "destructive"}>
                               {rowUser.isActive ? "Actif" : "Inactif"}
                             </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {rowUser.role === "TECHNICIAN" ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleToggleApproval(rowUser)}
+                              >
+                                {rowUser.canApproveAutomations ? "Habilité" : "Non habilité"}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {dateFormatter.format(new Date(rowUser.createdAt))}

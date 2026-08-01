@@ -8,6 +8,7 @@ import { AppService } from './app.service';
 import { AttachmentsModule } from './attachments/attachments.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { AuthModule } from './auth/auth.module';
+import { AutomationModule } from './automation/automation.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CommentsModule } from './comments/comments.module';
 import { ConfigurationItemsModule } from './configuration-items/configuration-items.module';
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module';
     AuditLogModule,
     RealtimeModule,
     KnowledgeModule,
+    AutomationModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

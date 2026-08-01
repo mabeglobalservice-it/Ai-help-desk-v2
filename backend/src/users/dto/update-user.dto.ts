@@ -60,4 +60,12 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      "Accorde à un TECHNICIAN le droit d'approuver les actions sensibles du module Automation (docs/06-cas-utilisation.md UC-022) — sans effet sur les autres rôles",
+  })
+  @IsOptional()
+  @IsBoolean()
+  canApproveAutomations?: boolean;
 }

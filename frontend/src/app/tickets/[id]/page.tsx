@@ -12,15 +12,19 @@ import {
   getAttachments,
   getComments,
   getPriorities,
+  getScripts,
   getTicket,
   getTicketCategories,
   getUsers,
   rateTicket,
+  requestAutomationRun,
   suggestTechnician,
   updateTicket,
   uploadAttachment,
   type AdminUser,
+  type AutomationRun,
   type Priority,
+  type Script,
   type TicketAttachment,
   type TicketCategory,
   type TicketComment,
@@ -136,6 +140,13 @@ export default function TicketDetailPage() {
   const [ratingError, setRatingError] = useState<string | null>(null);
   const [isSubmittingRating, setIsSubmittingRating] = useState(false);
 
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [selectedScriptId, setSelectedScriptId] = useState("");
+  const [automationJustification, setAutomationJustification] = useState("");
+  const [automationError, setAutomationError] = useState<string | null>(null);
+  const [isRequestingAutomation, setIsRequestingAutomation] = useState(false);
+  const [lastRunResult, setLastRunResult] = useState<AutomationRun | null>(null);
+
   useEffect(() => {
     const token = getToken();
     if (!token) {
@@ -217,9 +228,55 @@ export default function TicketDetailPage() {
     }
   }, [ticket]);
 
+  const isTechnician = user?.role === "TECHNICIAN";
+
+  // docs/06-cas-utilisation.md UC-014/UC-022, docs/11-documentation-api.md
+  // §8: POST /automation/runs est réservé au rôle TECHNICIAN (pas restreint
+  // au technicien assigné), donc la liste des scripts est chargée pour tout
+  // technicien consultant ce ticket.
+  useEffect(() => {
+    if (!isTechnician) return;
+    const token = getToken();
+    if (!token) return;
+
+    getScripts(token)
+      .then(setScripts)
+      .catch(() => {
+        // best-effort: the script dropdown just stays empty
+      });
+  }, [isTechnician]);
+
   async function refreshTicket(token: string) {
     const ticketData = await getTicket(token, params.id);
     setTicket(ticketData);
+  }
+
+  async function handleRequestAutomation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    if (!selectedScriptId || !automationJustification.trim()) return;
+
+    setAutomationError(null);
+    setIsRequestingAutomation(true);
+    try {
+      const run = await requestAutomationRun(token, {
+        scriptId: selectedScriptId,
+        ticketId: params.id,
+        justification: automationJustification.trim(),
+      });
+      setLastRunResult(run);
+      setAutomationJustification("");
+    } catch (err) {
+      setAutomationError(
+        err instanceof ApiError ? err.message : "Impossible de proposer cette action pour le moment.",
+      );
+    } finally {
+      setIsRequestingAutomation(false);
+    }
   }
 
   // docs/11-documentation-api.md §13: refetch en temps reel quand CE ticket
@@ -829,6 +886,78 @@ export default function TicketDetailPage() {
                       ) : null}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {isTechnician ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Automatisation</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {scripts.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Aucun script disponible pour le moment.</p>
+                  ) : (
+                    <form onSubmit={handleRequestAutomation} className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="automation-script">Script</Label>
+                        <Select value={selectedScriptId} onValueChange={(value) => setSelectedScriptId(value ?? "")}>
+                          <SelectTrigger id="automation-script" className="w-full">
+                            <SelectValue placeholder="Choisir un script">
+                              {(value: string | null) =>
+                                scripts.find((script) => script.id === value)?.name ?? "Choisir un script"
+                              }
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {scripts.map((script) => (
+                              <SelectItem key={script.id} value={script.id}>
+                                {script.name} {script.isSensitive ? "(sensible)" : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="automation-justification">Justification</Label>
+                        <Textarea
+                          id="automation-justification"
+                          value={automationJustification}
+                          onChange={(event) => setAutomationJustification(event.target.value)}
+                          placeholder="Ex. Compte verrouillé après 5 tentatives"
+                          rows={2}
+                          required
+                        />
+                      </div>
+                      {automationError ? (
+                        <Alert variant="destructive">
+                          <AlertDescription>{automationError}</AlertDescription>
+                        </Alert>
+                      ) : null}
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={
+                          isRequestingAutomation || !selectedScriptId || !automationJustification.trim()
+                        }
+                      >
+                        {isRequestingAutomation ? "Envoi..." : "Proposer"}
+                      </Button>
+                    </form>
+                  )}
+
+                  {lastRunResult ? (
+                    <Alert>
+                      <AlertDescription>
+                        {lastRunResult.status === "PENDING_APPROVAL"
+                          ? "Action sensible envoyée pour approbation."
+                          : lastRunResult.status === "SUCCESS"
+                            ? "Action exécutée avec succès."
+                            : `Statut : ${lastRunResult.status}`}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
                 </CardContent>
               </Card>
             ) : null}

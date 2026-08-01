@@ -420,6 +420,7 @@ export interface AdminUser {
   teamId: string | null;
   team: Team | null;
   isActive: boolean;
+  canApproveAutomations: boolean;
   createdAt: string;
 }
 
@@ -448,6 +449,7 @@ export interface UpdateUserInput {
   isActive?: boolean;
   departmentId?: string;
   teamId?: string | null;
+  canApproveAutomations?: boolean;
 }
 
 export function updateUser(token: string, id: string, input: UpdateUserInput): Promise<AdminUser> {
@@ -586,7 +588,13 @@ export async function downloadAttachment(
   return response.blob();
 }
 
-export type NotificationType = "TICKET_ASSIGNED" | "NEW_COMMENT" | "STATUS_CHANGED" | "SLA_BREACHED";
+export type NotificationType =
+  | "TICKET_ASSIGNED"
+  | "NEW_COMMENT"
+  | "STATUS_CHANGED"
+  | "SLA_BREACHED"
+  | "APPROVAL_REQUESTED"
+  | "AUTOMATION_DECIDED";
 
 export interface Notification {
   id: string;
@@ -684,4 +692,102 @@ export function getAuditLogs(token: string, filter: AuditLogFilter = {}): Promis
   if (filter.to) params.set("to", filter.to);
   const query = params.toString();
   return apiFetch<AuditLogEntry[]>(`/audit-logs${query ? `?${query}` : ""}`, token);
+}
+
+// docs/06-cas-utilisation.md UC-014/UC-022, docs/09-architecture-agents-ia.md
+// §3.5, docs/11-documentation-api.md §8 — module Automation.
+export type ScriptLanguage = "POWERSHELL" | "CMD" | "BASH" | "PYTHON";
+
+export interface Script {
+  id: string;
+  name: string;
+  language: ScriptLanguage;
+  content: string;
+  isSensitive: boolean;
+  createdAt: string;
+}
+
+export function getScripts(token: string): Promise<Script[]> {
+  return apiFetch<Script[]>("/automation/scripts", token);
+}
+
+export interface CreateScriptInput {
+  name: string;
+  language: ScriptLanguage;
+  content: string;
+  isSensitive?: boolean;
+}
+
+export function createScript(token: string, input: CreateScriptInput): Promise<Script> {
+  return apiFetch<Script>("/automation/scripts", token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export type AutomationRunStatus = "PENDING_APPROVAL" | "RUNNING" | "SUCCESS" | "FAILED" | "REJECTED";
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface AutomationRun {
+  id: string;
+  script: Script;
+  ticket: { id: string; reference: string; title: string } | null;
+  requestedBy: { id: string; displayName: string; email: string };
+  executedBy: { id: string; displayName: string; email: string } | null;
+  justification: string;
+  status: AutomationRunStatus;
+  startedAt: string | null;
+  finishedAt: string | null;
+  outputLog: string | null;
+  createdAt: string;
+  approval: Approval | null;
+}
+
+export interface Approval {
+  id: string;
+  automationRunId: string;
+  status: ApprovalStatus;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
+export interface PendingApproval extends Approval {
+  automationRun: AutomationRun;
+}
+
+export interface RequestAutomationRunInput {
+  scriptId: string;
+  ticketId?: string;
+  ciId?: string;
+  justification: string;
+}
+
+export function requestAutomationRun(
+  token: string,
+  input: RequestAutomationRunInput,
+): Promise<AutomationRun> {
+  return apiFetch<AutomationRun>("/automation/runs", token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getAutomationRun(token: string, id: string): Promise<AutomationRun> {
+  return apiFetch<AutomationRun>(`/automation/runs/${id}`, token);
+}
+
+export function getPendingApprovals(token: string): Promise<PendingApproval[]> {
+  return apiFetch<PendingApproval[]>("/automation/approvals/pending", token);
+}
+
+export function decideApproval(
+  token: string,
+  id: string,
+  decision: "APPROVED" | "REJECTED",
+  note?: string,
+): Promise<AutomationRun> {
+  return apiFetch<AutomationRun>(`/automation/approvals/${id}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ decision, note }),
+  });
 }

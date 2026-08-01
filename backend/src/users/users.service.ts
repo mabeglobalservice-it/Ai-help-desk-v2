@@ -23,6 +23,7 @@ const USER_SELECT = {
   teamId: true,
   team: true,
   isActive: true,
+  canApproveAutomations: true,
   createdAt: true,
 } as const;
 
@@ -34,12 +35,14 @@ function adminSnapshot(user: {
   isActive: boolean;
   departmentId: string | null;
   teamId: string | null;
+  canApproveAutomations: boolean;
 }) {
   return {
     role: user.role,
     isActive: user.isActive,
     departmentId: user.departmentId,
     teamId: user.teamId,
+    canApproveAutomations: user.canApproveAutomations,
   };
 }
 
@@ -92,6 +95,7 @@ export class UsersService {
           departmentId: dto.departmentId,
           teamId: dto.teamId,
           isActive: dto.isActive,
+          canApproveAutomations: dto.canApproveAutomations,
         },
         select: USER_SELECT,
       });

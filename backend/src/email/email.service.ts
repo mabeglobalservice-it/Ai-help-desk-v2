@@ -9,6 +9,8 @@ const SUBJECT_BY_TYPE: Record<NotificationType, string> = {
   NEW_COMMENT: 'Nouveau commentaire',
   STATUS_CHANGED: 'Statut modifié',
   SLA_BREACHED: 'SLA dépassé',
+  APPROVAL_REQUESTED: 'Approbation requise',
+  AUTOMATION_DECIDED: 'Décision sur une demande d’automatisation',
 };
 
 interface SendNotificationEmailInput {

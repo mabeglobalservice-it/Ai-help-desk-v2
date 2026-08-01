@@ -12,26 +12,35 @@ datasource db {
 }
 
 model User {
-  id           String      @id @default(uuid())
-  email        String      @unique
-  passwordHash String?     @map("password_hash")
-  displayName  String      @map("display_name")
-  role         Role
-  entraId      String?     @unique @map("entra_id")
-  departmentId String?     @map("department_id")
-  department   Department? @relation(fields: [departmentId], references: [id])
-  teamId       String?     @map("team_id")
-  team         Team?       @relation(fields: [teamId], references: [id])
-  isActive     Boolean     @default(true) @map("is_active")
-  createdAt    DateTime    @default(now()) @map("created_at")
+  id                    String      @id @default(uuid())
+  email                 String      @unique
+  passwordHash          String?     @map("password_hash")
+  displayName           String      @map("display_name")
+  role                  Role
+  entraId               String?     @unique @map("entra_id")
+  departmentId          String?     @map("department_id")
+  department            Department? @relation(fields: [departmentId], references: [id])
+  teamId                String?     @map("team_id")
+  team                  Team?       @relation(fields: [teamId], references: [id])
+  isActive              Boolean     @default(true) @map("is_active")
+  // docs/06-cas-utilisation.md UC-022, docs/11-documentation-api.md §8: un
+  // technicien "habilité" (au sens des docs) est un TECHNICIAN a qui
+  // l'Administrateur a explicitement accorde le droit d'approuver les
+  // actions sensibles du module Automation — distinct du role SUPERVISOR,
+  // qui a toujours ce droit.
+  canApproveAutomations Boolean     @default(false) @map("can_approve_automations")
+  createdAt             DateTime    @default(now()) @map("created_at")
 
-  ticketsAsEmployee   Ticket[]              @relation("EmployeeTickets")
-  ticketsAsTechnician Ticket[]              @relation("TechnicianTickets")
-  ticketComments      TicketComment[]
-  ticketAttachments   TicketAttachment[]
-  notifications       Notification[]
-  ticketStatusChanges TicketStatusHistory[]
-  refreshTokens       RefreshToken[]
+  ticketsAsEmployee       Ticket[]              @relation("EmployeeTickets")
+  ticketsAsTechnician     Ticket[]              @relation("TechnicianTickets")
+  ticketComments          TicketComment[]
+  ticketAttachments       TicketAttachment[]
+  notifications           Notification[]
+  ticketStatusChanges     TicketStatusHistory[]
+  refreshTokens           RefreshToken[]
+  automationRunsRequested AutomationRun[]       @relation("AutomationRunsRequested")
+  automationRunsExecuted  AutomationRun[]       @relation("AutomationRunsExecuted")
+  approvalsDecided        Approval[]
 
   @@map("users")
 }
@@ -114,10 +123,11 @@ model Ticket {
   ratingComment       String?            @map("rating_comment")
   ratedAt             DateTime?          @map("rated_at")
 
-  statusHistory TicketStatusHistory[]
-  comments      TicketComment[]
-  attachments   TicketAttachment[]
-  notifications Notification[]
+  statusHistory  TicketStatusHistory[]
+  comments       TicketComment[]
+  attachments    TicketAttachment[]
+  notifications  Notification[]
+  automationRuns AutomationRun[]
 
   @@index([status, priorityId, technicianId, categoryId])
   @@map("tickets")
@@ -143,6 +153,8 @@ enum NotificationType {
   NEW_COMMENT
   STATUS_CHANGED
   SLA_BREACHED
+  APPROVAL_REQUESTED
+  AUTOMATION_DECIDED
 }
 
 model TicketComment {
@@ -256,6 +268,7 @@ model ConfigurationItem {
   relationshipsAsParent CiRelationship[] @relation("ParentCi")
   relationshipsAsChild  CiRelationship[] @relation("ChildCi")
   tickets               Ticket[]
+  automationRuns        AutomationRun[]
 
   @@map("configuration_items")
 }
@@ -312,4 +325,88 @@ enum ActorType {
   USER
   AI_AGENT
   SYSTEM
+}
+
+// docs/08-schema-base-de-donnees.md §4.6, docs/09-architecture-agents-ia.md
+// §3.5 (Agent Automation), docs/06-cas-utilisation.md RM-01/RM-02/RM-03,
+// UC-014, UC-022. La distinction sensible/non-sensible n'est jamais laissee
+// a la discretion d'un modele de langage : elle vient de Script.isSensitive,
+// modifiable uniquement par un Administrateur.
+model Script {
+  id          String         @id @default(uuid())
+  name        String
+  language    ScriptLanguage
+  content     String
+  isSensitive Boolean        @default(true) @map("is_sensitive")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  automationRuns AutomationRun[]
+
+  @@map("scripts")
+}
+
+enum ScriptLanguage {
+  POWERSHELL
+  CMD
+  BASH
+  PYTHON
+}
+
+model AutomationRun {
+  id            String              @id @default(uuid())
+  scriptId      String              @map("script_id")
+  script        Script              @relation(fields: [scriptId], references: [id])
+  ticketId      String?             @map("ticket_id")
+  ticket        Ticket?             @relation(fields: [ticketId], references: [id])
+  ciId          String?             @map("ci_id")
+  ci            ConfigurationItem?  @relation(fields: [ciId], references: [id])
+  requestedById String              @map("requested_by_id")
+  requestedBy   User                @relation("AutomationRunsRequested", fields: [requestedById], references: [id])
+  // NULL si l'execution a ete automatique (script non sensible, aucune
+  // approbation humaine) ; sinon l'identite de l'approbateur dont la
+  // decision a declenche l'execution.
+  executedById  String?             @map("executed_by_id")
+  executedBy    User?               @relation("AutomationRunsExecuted", fields: [executedById], references: [id])
+  justification String
+  status        AutomationRunStatus @default(PENDING_APPROVAL)
+  startedAt     DateTime?           @map("started_at")
+  finishedAt    DateTime?           @map("finished_at")
+  outputLog     String?             @map("output_log")
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  approval Approval?
+
+  @@index([status, requestedById])
+  @@map("automation_runs")
+}
+
+// REJECTED n'est pas dans la liste du doc 08 (pending_approval, running,
+// success, failed) mais est necessaire pour representer l'issue terminale
+// d'un rejet (UC-022, variante) sans quoi le run resterait indefiniment
+// bloque a PENDING_APPROVAL.
+enum AutomationRunStatus {
+  PENDING_APPROVAL
+  RUNNING
+  SUCCESS
+  FAILED
+  REJECTED
+}
+
+model Approval {
+  id              String         @id @default(uuid())
+  automationRunId String         @unique @map("automation_run_id")
+  automationRun   AutomationRun  @relation(fields: [automationRunId], references: [id])
+  approvedById    String?        @map("approved_by")
+  approvedBy      User?          @relation(fields: [approvedById], references: [id])
+  status          ApprovalStatus @default(PENDING)
+  decidedAt       DateTime?      @map("decided_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  @@map("approvals")
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
