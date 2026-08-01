@@ -5,11 +5,18 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ApiError,
+  addCiRelationship,
+  getCiImpact,
   getConfigurationItem,
+  getConfigurationItems,
+  removeCiRelationship,
   updateConfigurationItem,
+  type CiImpactResult,
   type CiStatus,
+  type ConfigurationItem,
   type ConfigurationItemDetail,
   type Criticality,
+  type RelationshipType,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
@@ -48,6 +55,20 @@ const STATUS_OPTIONS: { value: CiStatus; label: string }[] = [
   { value: "RETIRED", label: "Retiré" },
 ];
 
+const RELATIONSHIP_TYPE_OPTIONS: { value: RelationshipType; label: string }[] = [
+  { value: "DEPENDS_ON", label: "Dépend de" },
+  { value: "HOSTS", label: "Héberge" },
+  { value: "RUNS_ON", label: "Fonctionne sur" },
+  { value: "CONNECTS_TO", label: "Connecté à" },
+];
+
+const RELATIONSHIP_TYPE_LABELS: Record<RelationshipType, string> = {
+  DEPENDS_ON: "Dépend de",
+  HOSTS: "Héberge",
+  RUNS_ON: "Fonctionne sur",
+  CONNECTS_TO: "Connecté à",
+};
+
 const dateFormatter = new Intl.DateTimeFormat("fr-CA", { dateStyle: "medium" });
 
 export default function AdminConfigurationItemDetailPage() {
@@ -61,6 +82,17 @@ export default function AdminConfigurationItemDetailPage() {
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  const [impact, setImpact] = useState<CiImpactResult | null>(null);
+  const [impactError, setImpactError] = useState<string | null>(null);
+
+  const [allCis, setAllCis] = useState<ConfigurationItem[]>([]);
+  const [newDependentId, setNewDependentId] = useState("");
+  const [newRelationshipType, setNewRelationshipType] = useState<RelationshipType>("RUNS_ON");
+  const [relationshipError, setRelationshipError] = useState<string | null>(null);
+  const [isSavingRelationship, setIsSavingRelationship] = useState(false);
+
+  const isViewer =
+    user?.role === "TECHNICIAN" || user?.role === "SUPERVISOR" || user?.role === "ADMIN";
   const isPrivileged = user?.role === "SUPERVISOR" || user?.role === "ADMIN";
 
   const load = useCallback(
@@ -82,17 +114,41 @@ export default function AdminConfigurationItemDetailPage() {
     [id, router],
   );
 
+  const loadImpact = useCallback(
+    (token: string) => {
+      return getCiImpact(token, id)
+        .then((data) => {
+          setImpact(data);
+          setImpactError(null);
+        })
+        .catch((err) => {
+          setImpactError(
+            err instanceof ApiError ? err.message : "Impossible de charger l'analyse d'impact.",
+          );
+        });
+    },
+    [id],
+  );
+
   useEffect(() => {
     const token = getToken();
     if (!token) {
       router.replace("/login");
       return;
     }
-    if (user && !isPrivileged) return;
+    if (user && !isViewer) return;
     if (!user) return;
 
     load(token);
-  }, [router, user, isPrivileged, load]);
+    loadImpact(token);
+    if (isPrivileged) {
+      getConfigurationItems(token)
+        .then(setAllCis)
+        .catch(() => {
+          // best-effort: the dependent-CI dropdown just stays empty
+        });
+    }
+  }, [router, user, isViewer, isPrivileged, load, loadImpact]);
 
   async function handleFieldChange(field: "status" | "criticality", value: string) {
     const token = getToken();
@@ -114,20 +170,63 @@ export default function AdminConfigurationItemDetailPage() {
     }
   }
 
+  async function handleAddRelationship() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    if (!newDependentId) return;
+
+    setRelationshipError(null);
+    setIsSavingRelationship(true);
+    try {
+      await addCiRelationship(token, id, {
+        childCiId: newDependentId,
+        relationshipType: newRelationshipType,
+      });
+      setNewDependentId("");
+      await Promise.all([load(token), loadImpact(token)]);
+    } catch (err) {
+      setRelationshipError(
+        err instanceof ApiError ? err.message : "Impossible d'ajouter cette relation pour le moment.",
+      );
+    } finally {
+      setIsSavingRelationship(false);
+    }
+  }
+
+  async function handleRemoveRelationship(relationshipId: string) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setRelationshipError(null);
+    try {
+      await removeCiRelationship(token, id, relationshipId);
+      await Promise.all([load(token), loadImpact(token)]);
+    } catch (err) {
+      setRelationshipError(
+        err instanceof ApiError ? err.message : "Impossible de retirer cette relation pour le moment.",
+      );
+    }
+  }
+
   const backLink = (
     <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/admin/configuration-items" />}>
       Retour à l&apos;inventaire
     </Button>
   );
 
-  if (user && !isPrivileged) {
+  if (user && !isViewer) {
     return (
       <div className="min-h-screen bg-background">
         <AppHeader title="Configuration Item" action={backLink} />
         <main className="mx-auto max-w-lg px-6 py-16">
           <Alert>
             <AlertDescription>
-              Cette page est réservée aux superviseurs et administrateurs.
+              Cette page est réservée aux techniciens, superviseurs et administrateurs.
             </AlertDescription>
           </Alert>
         </main>
@@ -167,53 +266,263 @@ export default function AdminConfigurationItemDetailPage() {
                     <p className="font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase">
                       Criticité
                     </p>
-                    <Select
-                      value={ci.criticality}
-                      onValueChange={(value) => value && handleFieldChange("criticality", value as string)}
-                      disabled={isUpdating}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue>
-                          {(value: string | null) =>
-                            CRITICALITY_OPTIONS.find((option) => option.value === value)?.label ?? ""
-                          }
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CRITICALITY_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {isPrivileged ? (
+                      <Select
+                        value={ci.criticality}
+                        onValueChange={(value) => value && handleFieldChange("criticality", value as string)}
+                        disabled={isUpdating}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue>
+                            {(value: string | null) =>
+                              CRITICALITY_OPTIONS.find((option) => option.value === value)?.label ?? ""
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CRITICALITY_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-sm">
+                        {CRITICALITY_OPTIONS.find((option) => option.value === ci.criticality)?.label}
+                      </p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <p className="font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase">
                       Statut
                     </p>
-                    <Select
-                      value={ci.status}
-                      onValueChange={(value) => value && handleFieldChange("status", value as string)}
-                      disabled={isUpdating}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue>
-                          {(value: string | null) =>
-                            STATUS_OPTIONS.find((option) => option.value === value)?.label ?? ""
-                          }
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {STATUS_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {isPrivileged ? (
+                      <Select
+                        value={ci.status}
+                        onValueChange={(value) => value && handleFieldChange("status", value as string)}
+                        disabled={isUpdating}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue>
+                            {(value: string | null) =>
+                              STATUS_OPTIONS.find((option) => option.value === value)?.label ?? ""
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {STATUS_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-sm">
+                        {STATUS_OPTIONS.find((option) => option.value === ci.status)?.label}
+                      </p>
+                    )}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-xl">Dépendances</CardTitle>
+                <CardDescription>
+                  Ce que cet équipement héberge/dépend (docs/08 §4.3) — la base d&apos;une analyse
+                  d&apos;impact fiable.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {relationshipError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{relationshipError}</AlertDescription>
+                  </Alert>
+                ) : null}
+
+                <div>
+                  <p className="mb-2 text-sm font-medium">Dépend de</p>
+                  {ci.relationshipsAsChild.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Aucune dépendance renseignée.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {ci.relationshipsAsChild.map((rel) => (
+                        <li key={rel.id} className="text-sm">
+                          {RELATIONSHIP_TYPE_LABELS[rel.relationshipType]} :{" "}
+                          <Link
+                            href={`/admin/configuration-items/${rel.parent.id}`}
+                            className="hover:underline"
+                          >
+                            {rel.parent.name}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Pour ajouter une dépendance, ouvrez la fiche de l&apos;équipement dont celui-ci
+                    dépend et ajoutez-le comme équipement dépendant depuis là-bas.
+                  </p>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-medium">En dépendent</p>
+                  {ci.relationshipsAsParent.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Aucun équipement ne dépend de celui-ci pour le moment.
+                    </p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {ci.relationshipsAsParent.map((rel) => (
+                        <li key={rel.id} className="flex items-center justify-between text-sm">
+                          <span>
+                            {RELATIONSHIP_TYPE_LABELS[rel.relationshipType]} :{" "}
+                            <Link
+                              href={`/admin/configuration-items/${rel.child.id}`}
+                              className="hover:underline"
+                            >
+                              {rel.child.name}
+                            </Link>
+                          </span>
+                          {isPrivileged ? (
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              onClick={() => handleRemoveRelationship(rel.id)}
+                            >
+                              Retirer
+                            </Button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                {isPrivileged ? (
+                  <div className="flex flex-wrap items-end gap-2 border-t border-border pt-4">
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-muted-foreground">Équipement dépendant</p>
+                      <Select value={newDependentId} onValueChange={(value) => setNewDependentId(value ?? "")}>
+                        <SelectTrigger className="w-56">
+                          <SelectValue placeholder="Choisir un équipement">
+                            {(value: string | null) =>
+                              allCis.find((item) => item.id === value)?.name ?? "Choisir un équipement"
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {allCis
+                            .filter((item) => item.id !== id)
+                            .map((item) => (
+                              <SelectItem key={item.id} value={item.id}>
+                                {item.name}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-muted-foreground">Type</p>
+                      <Select
+                        value={newRelationshipType}
+                        onValueChange={(value) => value && setNewRelationshipType(value as RelationshipType)}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue>
+                            {(value: string | null) =>
+                              RELATIONSHIP_TYPE_OPTIONS.find((option) => option.value === value)?.label
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RELATIONSHIP_TYPE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={isSavingRelationship || !newDependentId}
+                      onClick={handleAddRelationship}
+                    >
+                      {isSavingRelationship ? "Ajout..." : "Ajouter"}
+                    </Button>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-xl">Analyse d&apos;impact</CardTitle>
+                <CardDescription>
+                  En cas d&apos;incident sur cet équipement : quels autres équipements et quels
+                  employés sont potentiellement affectés (docs/08 §4.3).
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {impactError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{impactError}</AlertDescription>
+                  </Alert>
+                ) : impact === null ? (
+                  <p className="text-sm text-muted-foreground">Chargement de l&apos;analyse d&apos;impact...</p>
+                ) : (
+                  <>
+                    <div>
+                      <p className="mb-2 text-sm font-medium">
+                        Équipements impactés ({impact.impactedCis.length})
+                      </p>
+                      {impact.impactedCis.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          Aucun autre équipement ne dépend de celui-ci.
+                        </p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {impact.impactedCis.map((entry) => (
+                            <li key={entry.ci.id} className="text-sm">
+                              <Link href={`/admin/configuration-items/${entry.ci.id}`} className="hover:underline">
+                                {entry.ci.name}
+                              </Link>{" "}
+                              <span className="text-muted-foreground">
+                                ({RELATIONSHIP_TYPE_LABELS[entry.relationshipType]})
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div>
+                      <p className="mb-2 text-sm font-medium">
+                        Tickets ouverts concernés ({impact.affectedTickets.length})
+                      </p>
+                      {impact.affectedTickets.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          Aucun ticket ouvert n&apos;est actuellement lié à ces équipements.
+                        </p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {impact.affectedTickets.map((ticket) => (
+                            <li key={ticket.id} className="text-sm">
+                              <Link href={`/tickets/${ticket.id}`} className="hover:underline">
+                                {ticket.reference}
+                              </Link>{" "}
+                              — {ticket.title} ({ticket.employee.displayName})
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 

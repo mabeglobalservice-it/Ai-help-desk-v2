@@ -16,6 +16,7 @@ describe('ConfigurationItems (e2e)', () => {
 
   const employeeEmail = 'e2e-ci-employee@test.com';
   const supervisorEmail = 'e2e-ci-supervisor@test.com';
+  const technicianEmail = 'e2e-ci-technician@test.com';
   const password = 'CorrectHorseBattery1!';
 
   let ciTypeId: string;
@@ -23,10 +24,12 @@ describe('ConfigurationItems (e2e)', () => {
   let priorityId: string;
   let employeeId: string;
   let ciId: string;
+  let dependentCiId: string;
   let teamId: string;
 
   let employeeToken: string;
   let supervisorToken: string;
+  let technicianToken: string;
 
   async function loginAs(email: string): Promise<string> {
     const res = await request(app.getHttpServer())
@@ -50,7 +53,7 @@ describe('ConfigurationItems (e2e)', () => {
     prisma = app.get(PrismaService);
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const [employee, , ciType, category, priority] = await Promise.all([
+    const [employee, , , ciType, category, priority] = await Promise.all([
       prisma.user.create({
         data: {
           email: employeeEmail,
@@ -69,6 +72,15 @@ describe('ConfigurationItems (e2e)', () => {
           isActive: true,
         },
       }),
+      prisma.user.create({
+        data: {
+          email: technicianEmail,
+          passwordHash,
+          displayName: 'E2E CI Technician',
+          role: Role.TECHNICIAN,
+          isActive: true,
+        },
+      }),
       prisma.ciType.create({ data: { name: 'E2E CI Type' } }),
       prisma.ticketCategory.create({ data: { name: 'E2E CI Category' } }),
       prisma.priority.create({ data: { name: 'E2E CI Priority', level: 997 } }),
@@ -79,9 +91,10 @@ describe('ConfigurationItems (e2e)', () => {
     categoryId = category.id;
     priorityId = priority.id;
 
-    [employeeToken, supervisorToken] = await Promise.all([
+    [employeeToken, supervisorToken, technicianToken] = await Promise.all([
       loginAs(employeeEmail),
       loginAs(supervisorEmail),
+      loginAs(technicianEmail),
     ]);
 
     // The ticket created below has no technicianId, so TicketsService
@@ -98,17 +111,28 @@ describe('ConfigurationItems (e2e)', () => {
 
   afterAll(async () => {
     await prisma.ticket.deleteMany({ where: { employeeId } });
+    await prisma.ciRelationship.deleteMany({
+      where: { OR: [{ parentCiId: ciId }, { childCiId: ciId }] },
+    });
     if (ciId)
-      await prisma.configurationItem.deleteMany({ where: { id: ciId } });
+      await prisma.configurationItem.deleteMany({
+        where: { id: { in: [ciId, dependentCiId].filter(Boolean) } },
+      });
     await prisma.ciType.delete({ where: { id: ciTypeId } });
     await prisma.team.delete({ where: { id: teamId } });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
     await prisma.priority.delete({ where: { id: priorityId } });
     await prisma.refreshToken.deleteMany({
-      where: { user: { email: { in: [employeeEmail, supervisorEmail] } } },
+      where: {
+        user: {
+          email: { in: [employeeEmail, supervisorEmail, technicianEmail] },
+        },
+      },
     });
     await prisma.user.deleteMany({
-      where: { email: { in: [employeeEmail, supervisorEmail] } },
+      where: {
+        email: { in: [employeeEmail, supervisorEmail, technicianEmail] },
+      },
     });
     // @nestjs/schedule never stops its registered cron jobs on app.close()
     // (SLA breach check, refresh-token purge) — their timers otherwise keep
@@ -199,5 +223,99 @@ describe('ConfigurationItems (e2e)', () => {
       where: { action: 'CI_UPDATED', targetId: ciId },
     });
     expect(auditEntry).not.toBeNull();
+  });
+
+  // docs/08-schema-base-de-donnees.md §4.3, docs/11-documentation-api.md
+  // §9 (GET /inventory/cis/:id/impact) — "connaître l'impact d'un incident".
+  describe('CI relationships and impact analysis', () => {
+    let relationshipId: string;
+    let dependentTicketId: string;
+
+    it('rejects adding a relationship from an EMPLOYEE', async () => {
+      const dependent = await request(app.getHttpServer())
+        .post('/configuration-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          ciTypeId,
+          name: 'APP-E2E-DEPENDENTE',
+          inventoryNumber: 'INV-E2E-0002',
+        })
+        .expect(201);
+      dependentCiId = dependent.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/configuration-items/${ciId}/relationships`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ childCiId: dependentCiId, relationshipType: 'RUNS_ON' })
+        .expect(403);
+    });
+
+    it('rejects a CI depending on itself', async () => {
+      await request(app.getHttpServer())
+        .post(`/configuration-items/${ciId}/relationships`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ childCiId: ciId, relationshipType: 'RUNS_ON' })
+        .expect(400);
+    });
+
+    it('lets a SUPERVISOR add a dependency relationship', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/configuration-items/${ciId}/relationships`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ childCiId: dependentCiId, relationshipType: 'RUNS_ON' })
+        .expect(201);
+
+      expect(res.body.child.id).toBe(dependentCiId);
+      relationshipId = res.body.id;
+    });
+
+    it('rejects impact analysis for an EMPLOYEE', async () => {
+      await request(app.getHttpServer())
+        .get(`/configuration-items/${ciId}/impact`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
+
+    it('lets a TECHNICIAN see the dependent CI and its open tickets in the impact analysis', async () => {
+      const dependentTicket = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          categoryId,
+          priorityId,
+          ciId: dependentCiId,
+          title: 'E2E: application RH inaccessible',
+        })
+        .expect(201);
+      dependentTicketId = dependentTicket.body.id;
+
+      const res = await request(app.getHttpServer())
+        .get(`/configuration-items/${ciId}/impact`)
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+
+      expect(
+        res.body.impactedCis.some(
+          (entry: any) => entry.ci.id === dependentCiId,
+        ),
+      ).toBe(true);
+      expect(
+        res.body.affectedTickets.some((t: any) => t.id === dependentTicketId),
+      ).toBe(true);
+    });
+
+    it('removes the relationship, which then disappears from the impact analysis', async () => {
+      await request(app.getHttpServer())
+        .delete(`/configuration-items/${ciId}/relationships/${relationshipId}`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .get(`/configuration-items/${ciId}/impact`)
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+
+      expect(res.body.impactedCis).toEqual([]);
+    });
   });
 });

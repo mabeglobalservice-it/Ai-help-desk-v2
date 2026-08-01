@@ -777,7 +777,13 @@ export default function TicketDetailPage() {
                   <Field label="Équipement concerné">
                     {ticket.ci ? (
                       <>
-                        {ticket.ci.name}
+                        {isTechnician || user?.role === "SUPERVISOR" || user?.role === "ADMIN" ? (
+                          <Link href={`/admin/configuration-items/${ticket.ci.id}`} className="hover:underline">
+                            {ticket.ci.name}
+                          </Link>
+                        ) : (
+                          ticket.ci.name
+                        )}
                         <span className="block text-xs text-muted-foreground">
                           {ticket.ci.ciType.name} · {ticket.ci.inventoryNumber}
                         </span>

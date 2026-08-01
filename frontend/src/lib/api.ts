@@ -274,6 +274,30 @@ export interface ConfigurationItem {
   createdAt: string;
 }
 
+// docs/08-schema-base-de-donnees.md §4.3 : dependance de CI, dans les deux sens.
+export type RelationshipType = "DEPENDS_ON" | "HOSTS" | "CONNECTS_TO" | "RUNS_ON";
+
+export interface ConfigurationItemRef {
+  id: string;
+  name: string;
+  inventoryNumber: string;
+  criticality: Criticality;
+  status: CiStatus;
+  ciType: CiType;
+}
+
+export interface CiRelationshipAsParent {
+  id: string;
+  relationshipType: RelationshipType;
+  child: ConfigurationItemRef;
+}
+
+export interface CiRelationshipAsChild {
+  id: string;
+  relationshipType: RelationshipType;
+  parent: ConfigurationItemRef;
+}
+
 export interface ConfigurationItemDetail extends ConfigurationItem {
   tickets: {
     id: string;
@@ -282,6 +306,8 @@ export interface ConfigurationItemDetail extends ConfigurationItem {
     status: TicketStatus;
     createdAt: string;
   }[];
+  relationshipsAsParent: CiRelationshipAsParent[];
+  relationshipsAsChild: CiRelationshipAsChild[];
 }
 
 export function getConfigurationItems(token: string): Promise<ConfigurationItem[]> {
@@ -322,6 +348,59 @@ export function updateConfigurationItem(
     method: "PATCH",
     body: JSON.stringify(input),
   });
+}
+
+export interface CreateCiRelationshipInput {
+  childCiId: string;
+  relationshipType: RelationshipType;
+}
+
+export function addCiRelationship(
+  token: string,
+  id: string,
+  input: CreateCiRelationshipInput,
+): Promise<CiRelationshipAsParent> {
+  return apiFetch<CiRelationshipAsParent>(`/configuration-items/${id}/relationships`, token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function removeCiRelationship(
+  token: string,
+  id: string,
+  relationshipId: string,
+): Promise<{ id: string }> {
+  return apiFetch<{ id: string }>(`/configuration-items/${id}/relationships/${relationshipId}`, token, {
+    method: "DELETE",
+  });
+}
+
+// docs/08-schema-base-de-donnees.md §4.3, docs/11-documentation-api.md §9
+// (GET /inventory/cis/:id/impact) : "connaître l'impact d'un incident".
+export interface CiImpactEntry {
+  ci: ConfigurationItemRef;
+  relationshipType: RelationshipType;
+  viaParentId: string;
+}
+
+export interface CiImpactTicket {
+  id: string;
+  reference: string;
+  title: string;
+  status: TicketStatus;
+  ciId: string;
+  employee: { id: string; displayName: string; email: string };
+}
+
+export interface CiImpactResult {
+  ci: ConfigurationItemRef;
+  impactedCis: CiImpactEntry[];
+  affectedTickets: CiImpactTicket[];
+}
+
+export function getCiImpact(token: string, id: string): Promise<CiImpactResult> {
+  return apiFetch<CiImpactResult>(`/configuration-items/${id}/impact`, token);
 }
 
 export interface KnowledgeSearchResult {
