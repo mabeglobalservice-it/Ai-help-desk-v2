@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import {
   NotificationType,
   Prisma,
@@ -57,6 +58,7 @@ export class TicketsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly knowledgeService: KnowledgeService,
   ) {}
 
   private async generateReference(): Promise<string> {
@@ -401,6 +403,19 @@ export class TicketsService {
         dto.status as TicketStatus,
         changedById,
       );
+    }
+
+    // docs/10-architecture-rag.md §11 "Apprentissage continu": chaque
+    // passage a RESOLVED propose un article de connaissance (jamais indexe
+    // avant validation humaine explicite, voir KnowledgeService). Best-
+    // effort: un echec de generation IA ne doit jamais faire echouer la
+    // resolution du ticket elle-meme.
+    if (isStatusChange && isResolved) {
+      try {
+        await this.knowledgeService.proposeArticleFromTicket(id);
+      } catch (error) {
+        console.error('Failed to propose knowledge article', error);
+      }
     }
 
     return updated;

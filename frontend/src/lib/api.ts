@@ -332,6 +332,7 @@ export interface KnowledgeSearchResult {
   resolvedAt: string | null;
   categoryName: string;
   priorityName: string;
+  sourceType: "TICKET" | "ARTICLE";
   rank: number;
   snippet: string;
 }
@@ -339,6 +340,36 @@ export interface KnowledgeSearchResult {
 export function searchKnowledge(token: string, q: string): Promise<KnowledgeSearchResult[]> {
   const params = new URLSearchParams({ q });
   return apiFetch<KnowledgeSearchResult[]>(`/knowledge/search?${params.toString()}`, token);
+}
+
+// docs/10-architecture-rag.md §11 (Agent Documentation, apprentissage
+// continu), docs/11-documentation-api.md §7.
+export type KnowledgeArticleStatus = "PROPOSED" | "APPROVED" | "REJECTED";
+
+export interface KnowledgeArticle {
+  id: string;
+  title: string;
+  content: string;
+  status: KnowledgeArticleStatus;
+  createdAt: string;
+  decidedAt: string | null;
+  ticket: { id: string; reference: string; title: string };
+  approvedBy: { id: string; displayName: string; email: string } | null;
+}
+
+export function getPendingKnowledgeArticles(token: string): Promise<KnowledgeArticle[]> {
+  return apiFetch<KnowledgeArticle[]>("/knowledge/articles/pending", token);
+}
+
+export function decideKnowledgeArticle(
+  token: string,
+  id: string,
+  decision: "APPROVED" | "REJECTED",
+): Promise<KnowledgeArticle> {
+  return apiFetch<KnowledgeArticle>(`/knowledge/articles/${id}/approve`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ decision }),
+  });
 }
 
 export interface SlaPolicy {

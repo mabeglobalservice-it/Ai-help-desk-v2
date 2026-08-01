@@ -18,6 +18,7 @@ describe('Knowledge (e2e)', () => {
 
   const employeeEmail = 'e2e-knowledge-employee@test.com';
   const technicianEmail = 'e2e-knowledge-technician@test.com';
+  const supervisorEmail = 'e2e-knowledge-supervisor@test.com';
   const password = 'CorrectHorseBattery1!';
 
   let categoryId: string;
@@ -25,9 +26,12 @@ describe('Knowledge (e2e)', () => {
   let printerTicketId: string;
   let screenTicketId: string;
   let openTicketId: string;
+  let toApproveTicketId: string;
+  let toRejectTicketId: string;
 
   let employeeToken: string;
   let technicianToken: string;
+  let supervisorToken: string;
 
   async function loginAs(email: string): Promise<string> {
     const res = await request(app.getHttpServer())
@@ -51,7 +55,7 @@ describe('Knowledge (e2e)', () => {
     prisma = app.get(PrismaService);
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const [employee, , category, priority] = await Promise.all([
+    const [employee, technician, , category, priority] = await Promise.all([
       prisma.user.create({
         data: {
           email: employeeEmail,
@@ -67,6 +71,15 @@ describe('Knowledge (e2e)', () => {
           passwordHash,
           displayName: 'E2E Knowledge Technician',
           role: Role.TECHNICIAN,
+          isActive: true,
+        },
+      }),
+      prisma.user.create({
+        data: {
+          email: supervisorEmail,
+          passwordHash,
+          displayName: 'E2E Knowledge Supervisor',
+          role: Role.SUPERVISOR,
           isActive: true,
         },
       }),
@@ -121,27 +134,78 @@ describe('Knowledge (e2e)', () => {
       }),
     ]);
 
+    [toApproveTicketId, toRejectTicketId] = (
+      await Promise.all([
+        prisma.ticket.create({
+          data: {
+            reference: 'TCK-E2E-KNOWLEDGE-ARTICLE-0001',
+            employeeId: employee.id,
+            technicianId: technician.id,
+            categoryId,
+            priorityId,
+            title: 'E2E: ticket à approuver pour la base de connaissances',
+            summary: 'Problème à résoudre pour tester la proposition.',
+            status: TicketStatus.IN_PROGRESS,
+          },
+        }),
+        prisma.ticket.create({
+          data: {
+            reference: 'TCK-E2E-KNOWLEDGE-ARTICLE-0002',
+            employeeId: employee.id,
+            technicianId: technician.id,
+            categoryId,
+            priorityId,
+            title: 'E2E: ticket à rejeter pour la base de connaissances',
+            summary: 'Problème à résoudre pour tester le rejet.',
+            status: TicketStatus.IN_PROGRESS,
+          },
+        }),
+      ])
+    ).map((t) => t.id);
+
     printerTicketId = printerTicket.id;
     screenTicketId = screenTicket.id;
     openTicketId = openTicket.id;
 
-    [employeeToken, technicianToken] = await Promise.all([
+    [employeeToken, technicianToken, supervisorToken] = await Promise.all([
       loginAs(employeeEmail),
       loginAs(technicianEmail),
+      loginAs(supervisorEmail),
     ]);
   });
 
   afterAll(async () => {
+    await prisma.knowledgeArticle.deleteMany({
+      where: {
+        ticket: {
+          OR: [
+            { id: { in: [printerTicketId, screenTicketId, openTicketId] } },
+            { reference: { startsWith: 'TCK-E2E-KNOWLEDGE-ARTICLE' } },
+          ],
+        },
+      },
+    });
     await prisma.ticket.deleteMany({
-      where: { id: { in: [printerTicketId, screenTicketId, openTicketId] } },
+      where: {
+        OR: [
+          { id: { in: [printerTicketId, screenTicketId, openTicketId] } },
+          { reference: { startsWith: 'TCK-E2E-KNOWLEDGE-ARTICLE' } },
+        ],
+      },
     });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
     await prisma.priority.delete({ where: { id: priorityId } });
     await prisma.refreshToken.deleteMany({
-      where: { user: { email: { in: [employeeEmail, technicianEmail] } } },
+      where: {
+        user: {
+          email: { in: [employeeEmail, technicianEmail, supervisorEmail] },
+        },
+      },
     });
     await prisma.user.deleteMany({
-      where: { email: { in: [employeeEmail, technicianEmail] } },
+      where: {
+        email: { in: [employeeEmail, technicianEmail, supervisorEmail] },
+      },
     });
     // @nestjs/schedule never stops its registered cron jobs on app.close()
     // (SLA breach check, refresh-token purge) — their timers otherwise keep
@@ -214,5 +278,123 @@ describe('Knowledge (e2e)', () => {
       .expect(200);
 
     expect(res.body).toEqual([]);
+  });
+
+  // docs/10-architecture-rag.md §11 "Apprentissage continu", docs/11-
+  // documentation-api.md §7: la résolution d'un ticket propose un article,
+  // jamais indexé (recherchable) tant qu'il n'a pas été approuvé.
+  describe('Agent Documentation (propose/approve knowledge articles)', () => {
+    function longestWord(text: string): string {
+      return text
+        .split(/\s+/)
+        .reduce(
+          (longest, word) => (word.length > longest.length ? word : longest),
+          '',
+        );
+    }
+
+    it('rejects listing pending articles for a plain TECHNICIAN', async () => {
+      await request(app.getHttpServer())
+        .get('/knowledge/articles/pending')
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(403);
+    });
+
+    // Timeout raised: this test resolves a ticket, which triggers a real
+    // call to the Anthropic API (Agent Documentation summary generation) —
+    // slower than Jest's 5s default.
+    it('proposes an article on resolution, keeps it unsearchable until approved, then indexes it', async () => {
+      await request(app.getHttpServer())
+        .patch(`/tickets/${toApproveTicketId}`)
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .send({ status: TicketStatus.RESOLVED, resolutionNote: 'Résolu.' })
+        .expect(200);
+
+      const pending = await request(app.getHttpServer())
+        .get('/knowledge/articles/pending')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+
+      const proposed = pending.body.find(
+        (a: any) => a.ticket.id === toApproveTicketId,
+      );
+      expect(proposed).toBeDefined();
+      expect(proposed.status).toBe('PROPOSED');
+
+      const keyword = longestWord(proposed.title || proposed.content);
+
+      const beforeApproval = await request(app.getHttpServer())
+        .get('/knowledge/search')
+        .query({ q: keyword })
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+      expect(
+        beforeApproval.body.some(
+          (row: any) => row.sourceType === 'ARTICLE' && row.id === proposed.id,
+        ),
+      ).toBe(false);
+
+      const approved = await request(app.getHttpServer())
+        .patch(`/knowledge/articles/${proposed.id}/approve`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+      expect(approved.body.status).toBe('APPROVED');
+
+      const afterApproval = await request(app.getHttpServer())
+        .get('/knowledge/search')
+        .query({ q: keyword })
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+      expect(
+        afterApproval.body.some(
+          (row: any) => row.sourceType === 'ARTICLE' && row.id === proposed.id,
+        ),
+      ).toBe(true);
+
+      await request(app.getHttpServer())
+        .patch(`/knowledge/articles/${proposed.id}/approve`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(400);
+    }, 30000);
+
+    // Timeout raised: same reason as above (real Anthropic API call).
+    it('rejects a proposed article, which never becomes searchable', async () => {
+      await request(app.getHttpServer())
+        .patch(`/tickets/${toRejectTicketId}`)
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .send({ status: TicketStatus.RESOLVED, resolutionNote: 'Résolu.' })
+        .expect(200);
+
+      const pending = await request(app.getHttpServer())
+        .get('/knowledge/articles/pending')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+
+      const proposed = pending.body.find(
+        (a: any) => a.ticket.id === toRejectTicketId,
+      );
+      expect(proposed).toBeDefined();
+
+      const rejected = await request(app.getHttpServer())
+        .patch(`/knowledge/articles/${proposed.id}/approve`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ decision: 'REJECTED' })
+        .expect(200);
+      expect(rejected.body.status).toBe('REJECTED');
+
+      const keyword = longestWord(proposed.title || proposed.content);
+      const afterRejection = await request(app.getHttpServer())
+        .get('/knowledge/search')
+        .query({ q: keyword })
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+      expect(
+        afterRejection.body.some(
+          (row: any) => row.sourceType === 'ARTICLE' && row.id === proposed.id,
+        ),
+      ).toBe(false);
+    }, 30000);
   });
 });

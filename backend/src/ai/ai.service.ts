@@ -21,6 +21,33 @@ interface DiagnoseSuggestion {
   priorityId: string;
 }
 
+interface ArticleSuggestion {
+  title: string;
+  content: string;
+}
+
+export interface KnowledgeArticleDraft {
+  title: string;
+  content: string;
+  // docs/06-cas-utilisation.md RM-05: true when this draft came from the
+  // local template fallback rather than the AI provider.
+  degraded: boolean;
+}
+
+export interface ResolvedTicketSummaryInput {
+  title: string;
+  summary: string | null;
+  resolutionNote: string | null;
+  categoryName: string;
+}
+
+const ARTICLE_SYSTEM_PROMPT =
+  "Tu es l'Agent Documentation d'un service d'assistance informatique interne. " +
+  "À partir du contexte d'un ticket résolu (problème décrit, catégorie, note de résolution), " +
+  'rédige un article de base de connaissances concis et réutilisable pour un futur incident ' +
+  'similaire : un titre clair et un contenu structuré en deux parties, "Cause probable" et ' +
+  '"Solution appliquée". Reste factuel, ne generalise pas au-delà de ce que le ticket décrit.';
+
 export interface TicketDiagnosis {
   title: string;
   categoryId: string;
@@ -354,5 +381,113 @@ export class AiService {
     const firstSentence = trimmed.split(/(?<=[.!?])\s/)[0];
     const base = firstSentence.length > 5 ? firstSentence : trimmed;
     return base.length > 80 ? `${base.slice(0, 77)}...` : base;
+  }
+
+  // docs/10-architecture-rag.md §11 "Apprentissage continu" : un ticket
+  // résolu génère une proposition d'article, jamais indexée automatiquement
+  // (docs §11: validation humaine explicite requise avant indexation).
+  async summarizeTicketForKnowledgeArticle(
+    input: ResolvedTicketSummaryInput,
+  ): Promise<KnowledgeArticleDraft> {
+    if (!this.client) {
+      this.logger.warn(
+        "Clé API Anthropic absente : proposition d'article en mode dégradé (gabarit local)",
+      );
+      return this.localArticleDraft(input);
+    }
+
+    try {
+      return await this.aiArticleDraft(this.client, input);
+    } catch (error) {
+      this.logger.error(
+        "Échec de la génération IA de l'article, repli en mode dégradé (gabarit local)",
+        error,
+      );
+      return this.localArticleDraft(input);
+    }
+  }
+
+  private async aiArticleDraft(
+    client: Anthropic,
+    input: ResolvedTicketSummaryInput,
+  ): Promise<KnowledgeArticleDraft> {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 768,
+      system: ARTICLE_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Titre du ticket : ${input.title}\n` +
+            `Catégorie : ${input.categoryName}\n` +
+            `Description du problème : ${input.summary ?? '(non fournie)'}\n` +
+            `Note de résolution : ${input.resolutionNote ?? '(non fournie)'}`,
+        },
+      ],
+      tools: [
+        {
+          name: 'propose_knowledge_article',
+          description:
+            'Propose un article de base de connaissances à partir de ce ticket résolu',
+          input_schema: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                description:
+                  "Titre concis de l'article (moins de 100 caractères)",
+              },
+              content: {
+                type: 'string',
+                description:
+                  'Contenu structuré en "Cause probable" et "Solution appliquée"',
+              },
+            },
+            required: ['title', 'content'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'propose_knowledge_article' },
+    });
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+    );
+
+    if (!toolUse) {
+      throw new Error(
+        "Réponse de l'IA inattendue : aucun article structuré reçu",
+      );
+    }
+
+    const suggestion = toolUse.input as ArticleSuggestion;
+
+    return {
+      title: suggestion.title?.trim() || input.title,
+      content:
+        suggestion.content?.trim() || this.localArticleDraft(input).content,
+      degraded: false,
+    };
+  }
+
+  private localArticleDraft(
+    input: ResolvedTicketSummaryInput,
+  ): KnowledgeArticleDraft {
+    const lines = [
+      `Catégorie : ${input.categoryName}`,
+      '',
+      'Cause probable :',
+      input.summary?.trim() || '(non renseignée)',
+      '',
+      'Solution appliquée :',
+      input.resolutionNote?.trim() || '(non renseignée)',
+    ];
+
+    return {
+      title: input.title,
+      content: lines.join('\n'),
+      degraded: true,
+    };
   }
 }

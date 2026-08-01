@@ -304,6 +304,9 @@ describe('Tickets (e2e)', () => {
       .expect(400);
   });
 
+  // Timeout raised: resolving a ticket now triggers a real call to the
+  // Anthropic API (docs/10-architecture-rag.md §11, Agent Documentation
+  // proposes a knowledge article) — slower than Jest's 5s default.
   it('lets the assigned technician resolve the ticket with a resolution note (UC-013)', async () => {
     const res = await request(app.getHttpServer())
       .patch(`/tickets/${ticketId}`)
@@ -318,7 +321,7 @@ describe('Tickets (e2e)', () => {
     expect(res.body.resolutionNote).toBe(
       "Redémarrage du poste — le pilote s'était mal chargé.",
     );
-  });
+  }, 30000);
 
   it('rejects a rating from someone other than the owning employee', async () => {
     await request(app.getHttpServer())

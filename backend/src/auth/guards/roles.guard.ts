@@ -19,6 +19,7 @@ export class RolesGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- ESLint's type-aware pass (tsconfig.json, includes test/*.spec.ts) resolves request.user more loosely than `nest build` (tsconfig.build.json, excludes them), so it flags this cast as redundant and strips it on --fix, which then fails the real build.
     const user = request.user as { role?: Role } | undefined;
 
     return !!user?.role && requiredRoles.includes(user.role);

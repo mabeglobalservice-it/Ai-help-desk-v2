@@ -13,6 +13,7 @@ import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const dateFormatter = new Intl.DateTimeFormat("fr-CA", { dateStyle: "medium" });
@@ -105,11 +106,13 @@ export default function KnowledgePage() {
         <div className="flex flex-col gap-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-xl">Rechercher parmi les tickets résolus</CardTitle>
+              <CardTitle className="text-xl">
+                Rechercher parmi les tickets résolus et les articles de connaissance
+              </CardTitle>
               <CardDescription>
-                Retrouvez une résolution déjà appliquée à un problème similaire (US-26).
-                Recherche plein texte sur le titre et le résumé des tickets déjà résolus —
-                pas encore une recherche sémantique par embeddings.
+                Retrouvez une résolution déjà appliquée à un problème similaire (US-26), ou un
+                article rédigé à partir d&apos;un ticket résolu et approuvé par un superviseur.
+                Recherche plein texte — pas encore une recherche sémantique par embeddings.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -135,15 +138,20 @@ export default function KnowledgePage() {
           {results !== null ? (
             results.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Aucun ticket résolu ne correspond à cette recherche.
+                Aucun ticket résolu ou article ne correspond à cette recherche.
               </p>
             ) : (
               <div className="flex flex-col gap-3">
                 {results.map((result) => (
-                  <Card key={result.id}>
+                  <Card key={`${result.sourceType}-${result.id}`}>
                     <CardHeader>
                       <div className="flex items-start justify-between gap-4">
-                        <CardTitle className="text-base">{result.title}</CardTitle>
+                        <div className="flex items-center gap-2">
+                          {result.sourceType === "ARTICLE" ? (
+                            <Badge variant="secondary">Article</Badge>
+                          ) : null}
+                          <CardTitle className="text-base">{result.title}</CardTitle>
+                        </div>
                         <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                           {result.reference}
                         </span>

@@ -4,6 +4,7 @@ import { TicketsService } from './tickets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import { Prisma, Role, TicketStatus } from '../../generated/prisma/client';
 
 describe('TicketsService', () => {
@@ -25,6 +26,7 @@ describe('TicketsService', () => {
   };
   let notificationsService: { create: jest.Mock };
   let realtimeGateway: { emitToUser: jest.Mock; emitToRole: jest.Mock };
+  let knowledgeService: { proposeArticleFromTicket: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -44,6 +46,9 @@ describe('TicketsService', () => {
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     realtimeGateway = { emitToUser: jest.fn(), emitToRole: jest.fn() };
+    knowledgeService = {
+      proposeArticleFromTicket: jest.fn().mockResolvedValue(null),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -51,6 +56,7 @@ describe('TicketsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notificationsService },
         { provide: RealtimeGateway, useValue: realtimeGateway },
+        { provide: KnowledgeService, useValue: knowledgeService },
       ],
     }).compile();
 
@@ -317,6 +323,38 @@ describe('TicketsService', () => {
           }),
         }),
       );
+    });
+
+    // docs/10-architecture-rag.md §11: la transition vers RESOLVED propose
+    // un article de connaissance (jamais indexé sans validation humaine).
+    it('proposes a knowledge article when the ticket becomes RESOLVED', async () => {
+      const updated = { ...existing, status: TicketStatus.RESOLVED };
+      prisma.ticket.update.mockResolvedValue(updated);
+
+      await service.update(
+        'tkt-1',
+        { status: TicketStatus.RESOLVED },
+        'sup-1',
+        Role.SUPERVISOR,
+      );
+
+      expect(knowledgeService.proposeArticleFromTicket).toHaveBeenCalledWith(
+        'tkt-1',
+      );
+    });
+
+    it('does not propose a knowledge article for a non-resolving status change', async () => {
+      const updated = { ...existing, status: TicketStatus.IN_PROGRESS };
+      prisma.ticket.update.mockResolvedValue(updated);
+
+      await service.update(
+        'tkt-1',
+        { status: TicketStatus.IN_PROGRESS },
+        'sup-1',
+        Role.SUPERVISOR,
+      );
+
+      expect(knowledgeService.proposeArticleFromTicket).not.toHaveBeenCalled();
     });
 
     it('notifies and emits realtime event on new technician assignment', async () => {
