@@ -28,6 +28,7 @@ describe('ConfigurationItems (e2e)', () => {
   let teamId: string;
   let manufacturerId: string;
   let warrantyCiId: string;
+  const reliabilityCiIds: string[] = [];
 
   let employeeToken: string;
   let supervisorToken: string;
@@ -119,16 +120,22 @@ describe('ConfigurationItems (e2e)', () => {
     if (ciId)
       await prisma.configurationItem.deleteMany({
         where: {
-          id: { in: [ciId, dependentCiId, warrantyCiId].filter(Boolean) },
+          id: {
+            in: [ciId, dependentCiId, warrantyCiId, ...reliabilityCiIds].filter(
+              Boolean,
+            ),
+          },
         },
       });
     await prisma.warranty.deleteMany({
       where: { provider: { startsWith: 'E2E CI' } },
     });
-    if (manufacturerId) {
-      await prisma.model.deleteMany({ where: { manufacturerId } });
-      await prisma.manufacturer.delete({ where: { id: manufacturerId } });
-    }
+    await prisma.model.deleteMany({
+      where: { manufacturer: { name: { startsWith: 'E2E CI' } } },
+    });
+    await prisma.manufacturer.deleteMany({
+      where: { name: { startsWith: 'E2E CI' } },
+    });
     await prisma.ciType.delete({ where: { id: ciTypeId } });
     await prisma.team.delete({ where: { id: teamId } });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
@@ -334,6 +341,58 @@ describe('ConfigurationItems (e2e)', () => {
         .expect(200);
 
       expect(res.body.warranty).toBeNull();
+    });
+  });
+
+  // US-27 : analyse prédictive des pannes récurrentes par modèle, pour
+  // anticiper les remplacements (docs/09 §3.6, Agent Manager).
+  describe('model reliability', () => {
+    it('rejects model reliability for an EMPLOYEE', async () => {
+      await request(app.getHttpServer())
+        .get('/configuration-items/models/reliability')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
+
+    it('flags a model with a high recent ticket-per-CI ratio as at-risk', async () => {
+      for (let i = 1; i <= 3; i += 1) {
+        const ci = await request(app.getHttpServer())
+          .post('/configuration-items')
+          .set('Authorization', `Bearer ${supervisorToken}`)
+          .send({
+            ciTypeId,
+            name: `PC-E2E-REL-0${i}`,
+            inventoryNumber: `INV-E2E-REL-0${i}`,
+            manufacturerName: 'E2E CI Reliability Corp',
+            modelName: 'ReliaBook X1',
+          })
+          .expect(201);
+        reliabilityCiIds.push(ci.body.id);
+
+        await request(app.getHttpServer())
+          .post('/tickets')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({
+            categoryId,
+            priorityId,
+            ciId: ci.body.id,
+            title: `E2E: panne récurrente ${i}`,
+          })
+          .expect(201);
+      }
+
+      const res = await request(app.getHttpServer())
+        .get('/configuration-items/models/reliability')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+
+      const entry = res.body.find(
+        (item: any) => item.modelName === 'ReliaBook X1',
+      );
+      expect(entry).toBeDefined();
+      expect(entry.ciCount).toBe(3);
+      expect(entry.recentTicketCount).toBe(3);
+      expect(entry.atRisk).toBe(true);
     });
   });
 

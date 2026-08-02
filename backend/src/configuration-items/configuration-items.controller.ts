@@ -89,6 +89,17 @@ export class ConfigurationItemsController {
   }
 
   @ApiOperation({
+    summary: 'Analyse prédictive des pannes récurrentes par modèle (US-27)',
+    description:
+      'Réservé aux rôles SUPERVISOR, ADMIN — tendance du nombre de tickets par modèle sur 90 jours, pour anticiper les remplacements',
+  })
+  @Roles(Role.SUPERVISOR, Role.ADMIN)
+  @Get('models/reliability')
+  getModelReliability() {
+    return this.configurationItemsService.getModelReliability();
+  }
+
+  @ApiOperation({
     summary: 'Ajoute une relation de dépendance vers un autre CI',
     description: 'Réservé aux rôles SUPERVISOR, ADMIN',
   })

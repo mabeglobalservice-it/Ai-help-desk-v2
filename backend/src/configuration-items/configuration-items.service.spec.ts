@@ -32,7 +32,7 @@ describe('ConfigurationItemsService', () => {
     };
     ticket: { findMany: jest.Mock };
     manufacturer: { upsert: jest.Mock };
-    model: { upsert: jest.Mock };
+    model: { upsert: jest.Mock; findMany: jest.Mock };
     warranty: { create: jest.Mock; update: jest.Mock; delete: jest.Mock };
   };
   let auditLogService: { record: jest.Mock };
@@ -53,7 +53,7 @@ describe('ConfigurationItemsService', () => {
       },
       ticket: { findMany: jest.fn() },
       manufacturer: { upsert: jest.fn() },
-      model: { upsert: jest.fn() },
+      model: { upsert: jest.fn(), findMany: jest.fn() },
       warranty: {
         create: jest.fn(),
         update: jest.fn(),
@@ -392,6 +392,87 @@ describe('ConfigurationItemsService', () => {
           data: expect.objectContaining({ warrantyId: null }),
         }),
       );
+    });
+  });
+
+  // US-27 : analyse predictive des pannes recurrentes par modele
+  describe('getModelReliability', () => {
+    function daysAgo(n: number): Date {
+      return new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+    }
+
+    it('excludes models with no linked CI, flags at-risk models, and sorts by recent ticket count', async () => {
+      prisma.model.findMany.mockResolvedValue([
+        {
+          id: 'model-a',
+          name: 'Latitude 5420',
+          manufacturer: { name: 'Dell' },
+          configurationItems: [{ id: 'ci-a1' }, { id: 'ci-a2' }],
+        },
+        {
+          id: 'model-b',
+          name: 'EliteBook',
+          manufacturer: { name: 'HP' },
+          configurationItems: Array.from({ length: 10 }, (_, i) => ({
+            id: `ci-b${i}`,
+          })),
+        },
+        {
+          id: 'model-c',
+          name: 'Orphan model',
+          manufacturer: { name: 'Acme' },
+          configurationItems: [],
+        },
+        {
+          id: 'model-d',
+          name: 'ThinkPad',
+          manufacturer: { name: 'Lenovo' },
+          configurationItems: [
+            { id: 'ci-d1' },
+            { id: 'ci-d2' },
+            { id: 'ci-d3' },
+            { id: 'ci-d4' },
+          ],
+        },
+      ]);
+
+      prisma.ticket.findMany.mockResolvedValue([
+        { createdAt: daysAgo(10), ci: { modelId: 'model-a' } },
+        { createdAt: daysAgo(12), ci: { modelId: 'model-a' } },
+        { createdAt: daysAgo(15), ci: { modelId: 'model-a' } },
+        { createdAt: daysAgo(20), ci: { modelId: 'model-b' } },
+        { createdAt: daysAgo(25), ci: { modelId: 'model-b' } },
+        { createdAt: daysAgo(5), ci: { modelId: 'model-d' } },
+        { createdAt: daysAgo(6), ci: { modelId: 'model-d' } },
+        { createdAt: daysAgo(7), ci: { modelId: 'model-d' } },
+        { createdAt: daysAgo(100), ci: { modelId: 'model-d' } },
+      ]);
+
+      const result = await service.getModelReliability();
+
+      expect(result.map((entry) => entry.modelId)).toEqual([
+        'model-a',
+        'model-d',
+        'model-b',
+      ]);
+
+      const modelA = result.find((entry) => entry.modelId === 'model-a')!;
+      expect(modelA.ciCount).toBe(2);
+      expect(modelA.recentTicketCount).toBe(3);
+      expect(modelA.previousTicketCount).toBe(0);
+      expect(modelA.trendPercent).toBeNull();
+      expect(modelA.atRisk).toBe(true);
+
+      const modelB = result.find((entry) => entry.modelId === 'model-b')!;
+      expect(modelB.atRisk).toBe(false);
+
+      const modelD = result.find((entry) => entry.modelId === 'model-d')!;
+      expect(modelD.recentTicketCount).toBe(3);
+      expect(modelD.previousTicketCount).toBe(1);
+      expect(modelD.trendPercent).toBe(200);
+      expect(modelD.atRisk).toBe(true);
+
+      expect(result.some((entry) => entry.modelId === 'model-c')).toBe(false);
     });
   });
 

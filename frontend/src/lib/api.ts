@@ -451,6 +451,27 @@ export function getCiImpact(token: string, id: string): Promise<CiImpactResult> 
   return apiFetch<CiImpactResult>(`/configuration-items/${id}/impact`, token);
 }
 
+// US-27 : tendance du nombre de tickets par modèle sur 90 jours, pour
+// anticiper les remplacements (docs/09 §3.6, Agent Manager).
+export interface ModelReliabilityEntry {
+  modelId: string;
+  modelName: string;
+  manufacturerName: string;
+  ciCount: number;
+  recentTicketCount: number;
+  previousTicketCount: number;
+  recentTicketsPerCi: number;
+  trendPercent: number | null;
+  atRisk: boolean;
+}
+
+export function getModelReliability(token: string): Promise<ModelReliabilityEntry[]> {
+  return apiFetch<ModelReliabilityEntry[]>(
+    "/configuration-items/models/reliability",
+    token,
+  );
+}
+
 export interface KnowledgeSearchResult {
   id: string;
   reference: string;

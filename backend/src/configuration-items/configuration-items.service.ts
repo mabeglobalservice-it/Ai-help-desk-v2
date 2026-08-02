@@ -38,6 +38,19 @@ const OPEN_TICKET_STATUSES = [
   TicketStatus.ESCALATED,
 ];
 
+// US-27, docs/09-architecture-agents-ia.md §3.6 (Agent Manager) : "alertes
+// de tendance (ex. hausse des pannes sur un modele d'appareil)". Purement
+// statistique (comptage de tickets par modele sur deux fenetres glissantes),
+// pas de modele de machine learning — ce que le doc appelle une "analyse
+// predictive" ici se traduit par la detection d'une tendance a la hausse.
+const RELIABILITY_WINDOW_DAYS = 90;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+// Seuils choisis pour eviter le bruit statistique sur de petits volumes :
+// un modele avec 1 seul ticket de plus ne doit pas etre signale "a risque".
+const AT_RISK_MIN_RECENT_TICKETS = 3;
+const AT_RISK_TICKETS_PER_CI = 1;
+const AT_RISK_TREND_MULTIPLIER = 1.5;
+
 // docs/08-schema-base-de-donnees.md §4.3 (CMDB), docs/05-user-stories.md
 // US-22/US-24: gestion des Configuration Items (CI) et de leur lien aux
 // tickets, pour connaitre les actifs concernes par un incident.
@@ -241,6 +254,87 @@ export class ConfigurationItemsService {
     });
 
     return { ci, impactedCis, affectedTickets };
+  }
+
+  // US-27 : "analyse prédictive des pannes récurrentes par modèle
+  // d'appareil, afin d'anticiper les remplacements". Compare le nombre de
+  // tickets liés à des CI d'un même modèle sur la fenêtre récente vs la
+  // fenêtre précédente, et signale les modèles en hausse ou déjà au-dessus
+  // du seuil de fiabilité.
+  async getModelReliability() {
+    const now = new Date();
+    const recentStart = new Date(
+      now.getTime() - RELIABILITY_WINDOW_DAYS * MS_PER_DAY,
+    );
+    const previousStart = new Date(
+      recentStart.getTime() - RELIABILITY_WINDOW_DAYS * MS_PER_DAY,
+    );
+
+    const [models, tickets] = await Promise.all([
+      this.prisma.model.findMany({
+        include: {
+          manufacturer: true,
+          configurationItems: { select: { id: true } },
+        },
+      }),
+      this.prisma.ticket.findMany({
+        where: {
+          createdAt: { gte: previousStart },
+          ci: { modelId: { not: null } },
+        },
+        select: { createdAt: true, ci: { select: { modelId: true } } },
+      }),
+    ]);
+
+    const recentCounts = new Map<string, number>();
+    const previousCounts = new Map<string, number>();
+    for (const ticket of tickets) {
+      const modelId = ticket.ci?.modelId;
+      if (!modelId) continue;
+      const bucket =
+        ticket.createdAt >= recentStart ? recentCounts : previousCounts;
+      bucket.set(modelId, (bucket.get(modelId) ?? 0) + 1);
+    }
+
+    return models
+      .filter((model) => model.configurationItems.length > 0)
+      .map((model) => {
+        const ciCount = model.configurationItems.length;
+        const recentTicketCount = recentCounts.get(model.id) ?? 0;
+        const previousTicketCount = previousCounts.get(model.id) ?? 0;
+        const recentTicketsPerCi = recentTicketCount / ciCount;
+        const trendPercent =
+          previousTicketCount > 0
+            ? Math.round(
+                ((recentTicketCount - previousTicketCount) /
+                  previousTicketCount) *
+                  100,
+              )
+            : null;
+        const atRisk =
+          recentTicketCount >= AT_RISK_MIN_RECENT_TICKETS &&
+          (recentTicketsPerCi >= AT_RISK_TICKETS_PER_CI ||
+            (previousTicketCount > 0 &&
+              recentTicketCount >=
+                previousTicketCount * AT_RISK_TREND_MULTIPLIER));
+
+        return {
+          modelId: model.id,
+          modelName: model.name,
+          manufacturerName: model.manufacturer.name,
+          ciCount,
+          recentTicketCount,
+          previousTicketCount,
+          recentTicketsPerCi: Math.round(recentTicketsPerCi * 100) / 100,
+          trendPercent,
+          atRisk,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.recentTicketCount - a.recentTicketCount ||
+          b.recentTicketsPerCi - a.recentTicketsPerCi,
+      );
   }
 
   // US-24 : le fabricant/modèle sont des tables normalisées (docs/08 §4.3)

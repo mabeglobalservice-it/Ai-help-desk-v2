@@ -15,17 +15,34 @@ import {
   ApiError,
   exportDashboardReport,
   getDashboardStats,
+  getModelReliability,
   type DashboardExportFormat,
   type DashboardStats,
+  type ModelReliabilityEntry,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { AppHeader } from "@/components/app-header";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+function formatTrend(entry: ModelReliabilityEntry): string {
+  if (entry.trendPercent === null) return entry.recentTicketCount > 0 ? "Nouveau" : "—";
+  const sign = entry.trendPercent > 0 ? "+" : "";
+  return `${sign}${entry.trendPercent} %`;
+}
 
 const DASHBOARD_ROLES = new Set(["SUPERVISOR", "ADMIN"]);
 
@@ -49,6 +66,8 @@ export default function DashboardPage() {
   const [toDate, setToDate] = useState("");
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportingFormat, setExportingFormat] = useState<DashboardExportFormat | null>(null);
+  const [modelReliability, setModelReliability] = useState<ModelReliabilityEntry[] | null>(null);
+  const [modelReliabilityError, setModelReliabilityError] = useState<string | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -73,6 +92,20 @@ export default function DashboardPage() {
         setError("Impossible de charger les statistiques pour le moment.");
       });
   }, [router, user, fromDate, toDate]);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token || (user && !DASHBOARD_ROLES.has(user.role)) || !user) return;
+
+    getModelReliability(token)
+      .then((data) => {
+        setModelReliability(data);
+        setModelReliabilityError(null);
+      })
+      .catch(() => {
+        setModelReliabilityError("Impossible de charger la fiabilité par modèle pour le moment.");
+      });
+  }, [user]);
 
   function resetDateFilter() {
     setFromDate("");
@@ -315,6 +348,64 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
             </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Fiabilité par modèle d&apos;équipement</CardTitle>
+                <CardDescription>
+                  US-27 : tendance du nombre de tickets par modèle sur 90 jours, pour anticiper les
+                  remplacements.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {modelReliabilityError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{modelReliabilityError}</AlertDescription>
+                  </Alert>
+                ) : modelReliability === null ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">Chargement...</p>
+                ) : modelReliability.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    Aucun équipement avec un fabricant/modèle renseigné pour le moment.
+                  </p>
+                ) : (
+                  <div className="overflow-hidden rounded-md border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Modèle</TableHead>
+                          <TableHead>Équipements</TableHead>
+                          <TableHead>Tickets (90j)</TableHead>
+                          <TableHead>Tickets (90j précédents)</TableHead>
+                          <TableHead>Tendance</TableHead>
+                          <TableHead>Statut</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {modelReliability.map((entry) => (
+                          <TableRow key={entry.modelId}>
+                            <TableCell className="font-medium">
+                              {entry.manufacturerName} {entry.modelName}
+                            </TableCell>
+                            <TableCell>{entry.ciCount}</TableCell>
+                            <TableCell>{entry.recentTicketCount}</TableCell>
+                            <TableCell>{entry.previousTicketCount}</TableCell>
+                            <TableCell>{formatTrend(entry)}</TableCell>
+                            <TableCell>
+                              {entry.atRisk ? (
+                                <Badge variant="destructive">À risque</Badge>
+                              ) : (
+                                <Badge variant="secondary">Stable</Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
       </main>
