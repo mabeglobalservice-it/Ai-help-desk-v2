@@ -8,8 +8,10 @@ import {
   createConfigurationItem,
   getCiTypes,
   getConfigurationItems,
+  getManufacturers,
   type CiType,
   type ConfigurationItem,
+  type Manufacturer,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
@@ -55,12 +57,15 @@ export default function AdminConfigurationItemsPage() {
 
   const [items, setItems] = useState<ConfigurationItem[] | null>(null);
   const [ciTypes, setCiTypes] = useState<CiType[]>([]);
+  const [manufacturers, setManufacturers] = useState<Manufacturer[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [ciTypeId, setCiTypeId] = useState("");
   const [inventoryNumber, setInventoryNumber] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
+  const [manufacturerName, setManufacturerName] = useState("");
+  const [modelName, setModelName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -100,6 +105,11 @@ export default function AdminConfigurationItemsPage() {
       .catch(() => {
         // best-effort: the type dropdown just stays empty
       });
+    getManufacturers(token)
+      .then(setManufacturers)
+      .catch(() => {
+        // best-effort: the suggestion list just stays empty
+      });
   }, [router, user, isPrivileged, loadItems]);
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -118,12 +128,21 @@ export default function AdminConfigurationItemsPage() {
         ciTypeId,
         inventoryNumber,
         serialNumber: serialNumber || undefined,
+        manufacturerName: manufacturerName || undefined,
+        modelName: modelName || undefined,
       });
       setName("");
       setCiTypeId("");
       setInventoryNumber("");
       setSerialNumber("");
+      setManufacturerName("");
+      setModelName("");
       await loadItems(token);
+      await getManufacturers(token)
+        .then(setManufacturers)
+        .catch(() => {
+          // best-effort: the suggestion list just stays as-is
+        });
     } catch (err) {
       setCreateError(
         err instanceof ApiError ? err.message : "Impossible de créer ce Configuration Item pour le moment.",
@@ -214,6 +233,36 @@ export default function AdminConfigurationItemsPage() {
                     id="new-ci-serial"
                     value={serialNumber}
                     onChange={(event) => setSerialNumber(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-ci-manufacturer">Fabricant (optionnel)</Label>
+                  <Input
+                    id="new-ci-manufacturer"
+                    list="manufacturer-suggestions"
+                    value={manufacturerName}
+                    onChange={(event) => setManufacturerName(event.target.value)}
+                    placeholder="Ex. Dell"
+                  />
+                  <datalist id="manufacturer-suggestions">
+                    {manufacturers.map((manufacturer) => (
+                      <option key={manufacturer.id} value={manufacturer.name} />
+                    ))}
+                  </datalist>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-ci-model">Modèle (optionnel)</Label>
+                  <Input
+                    id="new-ci-model"
+                    value={modelName}
+                    onChange={(event) => setModelName(event.target.value)}
+                    placeholder="Ex. Latitude 5420"
+                    disabled={!manufacturerName.trim()}
+                    title={
+                      manufacturerName.trim()
+                        ? undefined
+                        : "Renseignez d'abord le fabricant"
+                    }
                   />
                 </div>
                 <div className="sm:col-span-2">

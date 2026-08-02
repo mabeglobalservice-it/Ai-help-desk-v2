@@ -259,6 +259,46 @@ export function getCiTypes(token: string): Promise<CiType[]> {
   return apiFetch<CiType[]>("/ci-types", token);
 }
 
+export interface Manufacturer {
+  id: string;
+  name: string;
+}
+
+export function getManufacturers(token: string): Promise<Manufacturer[]> {
+  return apiFetch<Manufacturer[]>("/manufacturers", token);
+}
+
+export interface CiModel {
+  id: string;
+  name: string;
+  manufacturerId: string;
+}
+
+export function getModelsByManufacturer(
+  token: string,
+  manufacturerId: string,
+): Promise<CiModel[]> {
+  return apiFetch<CiModel[]>(`/models?manufacturerId=${manufacturerId}`, token);
+}
+
+// US-24 : garantie d'un CI, consultée avant de décider réparer vs remplacer.
+export interface Warranty {
+  id: string;
+  provider: string;
+  startDate: string;
+  endDate: string;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+export interface SetWarrantyInput {
+  provider: string;
+  startDate: string;
+  endDate: string;
+  referenceNumber?: string;
+  notes?: string;
+}
+
 export type Criticality = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type CiStatus = "ACTIVE" | "IN_REPAIR" | "RETIRED";
 
@@ -269,6 +309,9 @@ export interface ConfigurationItem {
   name: string;
   inventoryNumber: string;
   serialNumber: string | null;
+  manufacturer: Manufacturer | null;
+  model: (CiModel & { manufacturer: Manufacturer }) | null;
+  warranty: Warranty | null;
   criticality: Criticality;
   status: CiStatus;
   createdAt: string;
@@ -323,6 +366,9 @@ export interface CreateConfigurationItemInput {
   name: string;
   inventoryNumber: string;
   serialNumber?: string;
+  manufacturerName?: string;
+  modelName?: string;
+  warranty?: SetWarrantyInput;
   criticality?: Criticality;
   status?: CiStatus;
 }
@@ -337,7 +383,9 @@ export function createConfigurationItem(
   });
 }
 
-export type UpdateConfigurationItemInput = Partial<CreateConfigurationItemInput>;
+export type UpdateConfigurationItemInput = Partial<CreateConfigurationItemInput> & {
+  clearWarranty?: boolean;
+};
 
 export function updateConfigurationItem(
   token: string,

@@ -20,4 +20,18 @@ export class CatalogService {
   findAllCiTypes() {
     return this.prisma.ciType.findMany({ orderBy: { name: 'asc' } });
   }
+
+  // US-24 : suggestions pour le fabricant/modèle d'un CI (créés à la volée
+  // par nom depuis le formulaire de CI, cf. ConfigurationItemsService).
+  findAllManufacturers() {
+    return this.prisma.manufacturer.findMany({ orderBy: { name: 'asc' } });
+  }
+
+  findModelsByManufacturer(manufacturerId?: string) {
+    if (!manufacturerId) return Promise.resolve([]);
+    return this.prisma.model.findMany({
+      where: { manufacturerId },
+      orderBy: { name: 'asc' },
+    });
+  }
 }

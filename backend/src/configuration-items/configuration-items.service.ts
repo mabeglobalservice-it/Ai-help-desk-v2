@@ -11,8 +11,15 @@ import { CreateConfigurationItemDto } from './dto/create-configuration-item.dto'
 import { UpdateConfigurationItemDto } from './dto/update-configuration-item.dto';
 import { FindConfigurationItemsQueryDto } from './dto/find-configuration-items-query.dto';
 import { CreateCiRelationshipDto } from './dto/create-ci-relationship.dto';
+import { SetCiWarrantyDto } from './dto/set-ci-warranty.dto';
 
-const CI_INCLUDE = { ciType: true, location: true } as const;
+const CI_INCLUDE = {
+  ciType: true,
+  location: true,
+  manufacturer: true,
+  model: { include: { manufacturer: true } },
+  warranty: true,
+} as const;
 
 const RELATIONSHIP_CI_SELECT = {
   id: true,
@@ -236,7 +243,76 @@ export class ConfigurationItemsService {
     return { ci, impactedCis, affectedTickets };
   }
 
-  private async createRecord(dto: CreateConfigurationItemDto) {
+  // US-24 : le fabricant/modèle sont des tables normalisées (docs/08 §4.3)
+  // pour éviter la duplication ; on les crée à la volée par leur nom plutôt
+  // que d'exposer un écran d'administration séparé pour un si petit référentiel.
+  private async resolveManufacturerAndModel(
+    dto: Pick<CreateConfigurationItemDto, 'manufacturerName' | 'modelName'>,
+    existingManufacturerId: string | null,
+  ): Promise<{ manufacturerId?: string; modelId?: string }> {
+    let manufacturerId = existingManufacturerId ?? undefined;
+
+    if (dto.manufacturerName) {
+      const manufacturer = await this.prisma.manufacturer.upsert({
+        where: { name: dto.manufacturerName },
+        update: {},
+        create: { name: dto.manufacturerName },
+      });
+      manufacturerId = manufacturer.id;
+    }
+
+    if (!dto.modelName) {
+      return { manufacturerId };
+    }
+
+    if (!manufacturerId) {
+      throw new BadRequestException(
+        'Un modèle nécessite un fabricant : renseignez le fabricant avant le modèle',
+      );
+    }
+
+    const model = await this.prisma.model.upsert({
+      where: { manufacturerId_name: { manufacturerId, name: dto.modelName } },
+      update: {},
+      create: { manufacturerId, name: dto.modelName },
+    });
+
+    return { manufacturerId, modelId: model.id };
+  }
+
+  // Garantie stockée comme une entité a part (docs/08 §4.3) plutot que des
+  // champs directement sur le CI, pour permettre onDelete: SetNull lors du
+  // retrait (clearWarranty) sans avoir a toucher au CI lui-meme.
+  private async upsertWarranty(
+    existingWarrantyId: string | null,
+    dto: SetCiWarrantyDto,
+  ): Promise<string> {
+    const data = {
+      provider: dto.provider,
+      startDate: new Date(dto.startDate),
+      endDate: new Date(dto.endDate),
+      referenceNumber: dto.referenceNumber,
+      notes: dto.notes,
+    };
+
+    if (existingWarrantyId) {
+      const updated = await this.prisma.warranty.update({
+        where: { id: existingWarrantyId },
+        data,
+      });
+      return updated.id;
+    }
+
+    const created = await this.prisma.warranty.create({ data });
+    return created.id;
+  }
+
+  private async createRecord(
+    dto: CreateConfigurationItemDto,
+    manufacturerId: string | undefined,
+    modelId: string | undefined,
+    warrantyId: string | undefined,
+  ) {
     try {
       return await this.prisma.configurationItem.create({
         data: {
@@ -246,6 +322,9 @@ export class ConfigurationItemsService {
           serialNumber: dto.serialNumber,
           criticality: dto.criticality,
           status: dto.status,
+          manufacturerId,
+          modelId,
+          warrantyId,
         },
         include: CI_INCLUDE,
       });
@@ -262,7 +341,13 @@ export class ConfigurationItemsService {
     }
   }
 
-  private async updateRecord(id: string, dto: UpdateConfigurationItemDto) {
+  private async updateRecord(
+    id: string,
+    dto: UpdateConfigurationItemDto,
+    manufacturerId: string | undefined,
+    modelId: string | undefined,
+    warrantyId: string | null | undefined,
+  ) {
     try {
       return await this.prisma.configurationItem.update({
         where: { id },
@@ -273,6 +358,9 @@ export class ConfigurationItemsService {
           serialNumber: dto.serialNumber,
           criticality: dto.criticality,
           status: dto.status,
+          manufacturerId,
+          modelId,
+          warrantyId,
         },
         include: CI_INCLUDE,
       });
@@ -290,7 +378,20 @@ export class ConfigurationItemsService {
   }
 
   async create(dto: CreateConfigurationItemDto, actorId: string) {
-    const ci = await this.createRecord(dto);
+    const { manufacturerId, modelId } = await this.resolveManufacturerAndModel(
+      dto,
+      null,
+    );
+    const warrantyId = dto.warranty
+      ? await this.upsertWarranty(null, dto.warranty)
+      : undefined;
+
+    const ci = await this.createRecord(
+      dto,
+      manufacturerId,
+      modelId,
+      warrantyId,
+    );
 
     await this.auditLogService.record({
       actorId,
@@ -310,7 +411,27 @@ export class ConfigurationItemsService {
 
   async update(id: string, dto: UpdateConfigurationItemDto, actorId: string) {
     const before = await this.findOne(id);
-    const updated = await this.updateRecord(id, dto);
+
+    let warrantyId: string | null | undefined = before.warrantyId;
+    if (dto.warranty) {
+      warrantyId = await this.upsertWarranty(before.warrantyId, dto.warranty);
+    } else if (dto.clearWarranty && before.warrantyId) {
+      await this.prisma.warranty.delete({ where: { id: before.warrantyId } });
+      warrantyId = null;
+    }
+
+    const { manufacturerId, modelId } = await this.resolveManufacturerAndModel(
+      dto,
+      before.manufacturerId,
+    );
+
+    const updated = await this.updateRecord(
+      id,
+      dto,
+      manufacturerId,
+      modelId,
+      warrantyId,
+    );
 
     await this.auditLogService.record({
       actorId,

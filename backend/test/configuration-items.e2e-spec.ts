@@ -26,6 +26,8 @@ describe('ConfigurationItems (e2e)', () => {
   let ciId: string;
   let dependentCiId: string;
   let teamId: string;
+  let manufacturerId: string;
+  let warrantyCiId: string;
 
   let employeeToken: string;
   let supervisorToken: string;
@@ -116,8 +118,17 @@ describe('ConfigurationItems (e2e)', () => {
     });
     if (ciId)
       await prisma.configurationItem.deleteMany({
-        where: { id: { in: [ciId, dependentCiId].filter(Boolean) } },
+        where: {
+          id: { in: [ciId, dependentCiId, warrantyCiId].filter(Boolean) },
+        },
       });
+    await prisma.warranty.deleteMany({
+      where: { provider: { startsWith: 'E2E CI' } },
+    });
+    if (manufacturerId) {
+      await prisma.model.deleteMany({ where: { manufacturerId } });
+      await prisma.manufacturer.delete({ where: { id: manufacturerId } });
+    }
     await prisma.ciType.delete({ where: { id: ciTypeId } });
     await prisma.team.delete({ where: { id: teamId } });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
@@ -223,6 +234,107 @@ describe('ConfigurationItems (e2e)', () => {
       where: { action: 'CI_UPDATED', targetId: ciId },
     });
     expect(auditEntry).not.toBeNull();
+  });
+
+  // US-24 : le technicien doit voir le fabricant/modèle et la garantie
+  // d'un CI avant de décider réparer vs remplacer (docs/08 §4.3).
+  describe('manufacturer, model and warranty', () => {
+    it('rejects a model without a manufacturer', async () => {
+      await request(app.getHttpServer())
+        .post('/configuration-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          ciTypeId,
+          name: 'PC-E2E-01',
+          inventoryNumber: 'INV-E2E-WARR-01',
+          modelName: 'Latitude 5420',
+        })
+        .expect(400);
+    });
+
+    it('creates a CI with manufacturer, model and warranty in one call', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/configuration-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          ciTypeId,
+          name: 'PC-E2E-01',
+          inventoryNumber: 'INV-E2E-WARR-01',
+          manufacturerName: 'E2E CI Dell',
+          modelName: 'Latitude 5420',
+          warranty: {
+            provider: 'E2E CI Dell ProSupport',
+            startDate: '2024-01-15',
+            endDate: '2027-01-15',
+            referenceNumber: 'WARR-E2E-001',
+          },
+        })
+        .expect(201);
+
+      expect(res.body.manufacturer.name).toBe('E2E CI Dell');
+      expect(res.body.model.name).toBe('Latitude 5420');
+      expect(res.body.warranty.provider).toBe('E2E CI Dell ProSupport');
+      warrantyCiId = res.body.id;
+      manufacturerId = res.body.manufacturer.id;
+    });
+
+    it('reuses the same manufacturer instead of duplicating it by name', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/configuration-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          ciTypeId,
+          name: 'PC-E2E-02',
+          inventoryNumber: 'INV-E2E-WARR-02',
+          manufacturerName: 'E2E CI Dell',
+        })
+        .expect(201);
+
+      expect(res.body.manufacturer.id).toBe(manufacturerId);
+      await prisma.configurationItem.delete({ where: { id: res.body.id } });
+    });
+
+    it('lets a TECHNICIAN view the warranty to decide repair vs replace', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/configuration-items/${warrantyCiId}`)
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+
+      expect(res.body.warranty.referenceNumber).toBe('WARR-E2E-001');
+    });
+
+    it('updates the existing warranty in place rather than creating a new one', async () => {
+      const before = await request(app.getHttpServer())
+        .get(`/configuration-items/${warrantyCiId}`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+      const warrantyId = before.body.warranty.id;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/configuration-items/${warrantyCiId}`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          warranty: {
+            provider: 'E2E CI Dell ProSupport Plus',
+            startDate: '2024-01-15',
+            endDate: '2028-01-15',
+          },
+        })
+        .expect(200);
+
+      expect(res.body.warranty.id).toBe(warrantyId);
+      expect(res.body.warranty.provider).toBe('E2E CI Dell ProSupport Plus');
+    });
+
+    it('clears the warranty when clearWarranty is sent', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/configuration-items/${warrantyCiId}`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ clearWarranty: true })
+        .expect(200);
+
+      expect(res.body.warranty).toBeNull();
+    });
   });
 
   // docs/08-schema-base-de-donnees.md §4.3, docs/11-documentation-api.md

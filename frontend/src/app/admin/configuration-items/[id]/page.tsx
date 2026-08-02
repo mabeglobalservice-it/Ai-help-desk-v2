@@ -18,6 +18,8 @@ import {
   type Criticality,
   type RelationshipType,
 } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { STATUS_DISPLAY } from "@/lib/ticket-display";
@@ -70,6 +72,12 @@ const RELATIONSHIP_TYPE_LABELS: Record<RelationshipType, string> = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("fr-CA", { dateStyle: "medium" });
+// La garantie est une date calendaire (pas un horodatage) : on force UTC pour
+// éviter qu'un fuseau local négatif ne l'affiche un jour plus tôt.
+const calendarDateFormatter = new Intl.DateTimeFormat("fr-CA", {
+  dateStyle: "medium",
+  timeZone: "UTC",
+});
 
 export default function AdminConfigurationItemDetailPage() {
   const router = useRouter();
@@ -90,6 +98,14 @@ export default function AdminConfigurationItemDetailPage() {
   const [newRelationshipType, setNewRelationshipType] = useState<RelationshipType>("RUNS_ON");
   const [relationshipError, setRelationshipError] = useState<string | null>(null);
   const [isSavingRelationship, setIsSavingRelationship] = useState(false);
+
+  const [isEditingWarranty, setIsEditingWarranty] = useState(false);
+  const [warrantyProvider, setWarrantyProvider] = useState("");
+  const [warrantyStartDate, setWarrantyStartDate] = useState("");
+  const [warrantyEndDate, setWarrantyEndDate] = useState("");
+  const [warrantyReferenceNumber, setWarrantyReferenceNumber] = useState("");
+  const [warrantyError, setWarrantyError] = useState<string | null>(null);
+  const [isSavingWarranty, setIsSavingWarranty] = useState(false);
 
   const isViewer =
     user?.role === "TECHNICIAN" || user?.role === "SUPERVISOR" || user?.role === "ADMIN";
@@ -213,6 +229,64 @@ export default function AdminConfigurationItemDetailPage() {
     }
   }
 
+  function startEditingWarranty() {
+    setWarrantyProvider(ci?.warranty?.provider ?? "");
+    setWarrantyStartDate(ci?.warranty?.startDate.slice(0, 10) ?? "");
+    setWarrantyEndDate(ci?.warranty?.endDate.slice(0, 10) ?? "");
+    setWarrantyReferenceNumber(ci?.warranty?.referenceNumber ?? "");
+    setWarrantyError(null);
+    setIsEditingWarranty(true);
+  }
+
+  async function handleSaveWarranty() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setWarrantyError(null);
+    setIsSavingWarranty(true);
+    try {
+      await updateConfigurationItem(token, id, {
+        warranty: {
+          provider: warrantyProvider,
+          startDate: warrantyStartDate,
+          endDate: warrantyEndDate,
+          referenceNumber: warrantyReferenceNumber || undefined,
+        },
+      });
+      setIsEditingWarranty(false);
+      await load(token);
+    } catch (err) {
+      setWarrantyError(
+        err instanceof ApiError ? err.message : "Impossible d'enregistrer la garantie pour le moment.",
+      );
+    } finally {
+      setIsSavingWarranty(false);
+    }
+  }
+
+  async function handleClearWarranty() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setWarrantyError(null);
+    setIsSavingWarranty(true);
+    try {
+      await updateConfigurationItem(token, id, { clearWarranty: true });
+      setIsEditingWarranty(false);
+      await load(token);
+    } catch (err) {
+      setWarrantyError(
+        err instanceof ApiError ? err.message : "Impossible de retirer la garantie pour le moment.",
+      );
+    } finally {
+      setIsSavingWarranty(false);
+    }
+  }
+
   const backLink = (
     <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/admin/configuration-items" />}>
       Retour à l&apos;inventaire
@@ -253,6 +327,9 @@ export default function AdminConfigurationItemDetailPage() {
                 <CardDescription>
                   {ci.ciType.name} · {ci.inventoryNumber}
                   {ci.serialNumber ? ` · N/S ${ci.serialNumber}` : null}
+                  {ci.manufacturer
+                    ? ` · ${ci.manufacturer.name}${ci.model ? ` ${ci.model.name}` : ""}`
+                    : null}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -325,6 +402,124 @@ export default function AdminConfigurationItemDetailPage() {
                     )}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-xl">Garantie</CardTitle>
+                <CardDescription>
+                  US-24 : à consulter avant de décider de réparer ou de remplacer cet équipement.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {warrantyError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{warrantyError}</AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {isEditingWarranty ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="warranty-provider">Fournisseur</Label>
+                        <Input
+                          id="warranty-provider"
+                          value={warrantyProvider}
+                          onChange={(event) => setWarrantyProvider(event.target.value)}
+                          placeholder="Ex. Dell ProSupport"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="warranty-reference">Référence (optionnel)</Label>
+                        <Input
+                          id="warranty-reference"
+                          value={warrantyReferenceNumber}
+                          onChange={(event) => setWarrantyReferenceNumber(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="warranty-start">Début</Label>
+                        <Input
+                          id="warranty-start"
+                          type="date"
+                          value={warrantyStartDate}
+                          onChange={(event) => setWarrantyStartDate(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="warranty-end">Fin</Label>
+                        <Input
+                          id="warranty-end"
+                          type="date"
+                          value={warrantyEndDate}
+                          onChange={(event) => setWarrantyEndDate(event.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        disabled={
+                          isSavingWarranty ||
+                          !warrantyProvider.trim() ||
+                          !warrantyStartDate ||
+                          !warrantyEndDate
+                        }
+                        onClick={handleSaveWarranty}
+                      >
+                        {isSavingWarranty ? "Enregistrement..." : "Enregistrer"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isSavingWarranty}
+                        onClick={() => setIsEditingWarranty(false)}
+                      >
+                        Annuler
+                      </Button>
+                    </div>
+                  </div>
+                ) : ci.warranty ? (
+                  <div className="space-y-2">
+                    <p className="text-sm">
+                      {ci.warranty.provider}
+                      {ci.warranty.referenceNumber ? ` (${ci.warranty.referenceNumber})` : null}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Du {calendarDateFormatter.format(new Date(ci.warranty.startDate))} au{" "}
+                      {calendarDateFormatter.format(new Date(ci.warranty.endDate))}
+                    </p>
+                    <Badge variant={new Date(ci.warranty.endDate) >= new Date() ? "secondary" : "destructive"}>
+                      {new Date(ci.warranty.endDate) >= new Date() ? "Sous garantie" : "Garantie expirée"}
+                    </Badge>
+                    {isPrivileged ? (
+                      <div className="flex gap-2 pt-2">
+                        <Button variant="outline" size="sm" onClick={startEditingWarranty}>
+                          Modifier
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={isSavingWarranty}
+                          onClick={handleClearWarranty}
+                        >
+                          Retirer
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Aucune garantie enregistrée.</p>
+                    {isPrivileged ? (
+                      <Button variant="outline" size="sm" onClick={startEditingWarranty}>
+                        Ajouter une garantie
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

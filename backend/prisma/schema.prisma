@@ -255,17 +255,23 @@ model CiType {
 }
 
 model ConfigurationItem {
-  id              String      @id @default(uuid())
-  ciTypeId        String      @map("ci_type_id")
-  ciType          CiType      @relation(fields: [ciTypeId], references: [id])
+  id              String        @id @default(uuid())
+  ciTypeId        String        @map("ci_type_id")
+  ciType          CiType        @relation(fields: [ciTypeId], references: [id])
   name            String
-  inventoryNumber String      @unique @map("inventory_number")
-  serialNumber    String?     @map("serial_number")
-  locationId      String?     @map("location_id")
-  location        Location?   @relation(fields: [locationId], references: [id])
-  criticality     Criticality @default(MEDIUM)
-  status          CiStatus    @default(ACTIVE)
-  createdAt       DateTime    @default(now()) @map("created_at")
+  inventoryNumber String        @unique @map("inventory_number")
+  serialNumber    String?       @map("serial_number")
+  manufacturerId  String?       @map("manufacturer_id")
+  manufacturer    Manufacturer? @relation(fields: [manufacturerId], references: [id])
+  modelId         String?       @map("model_id")
+  model           Model?        @relation(fields: [modelId], references: [id])
+  warrantyId      String?       @unique @map("warranty_id")
+  warranty        Warranty?     @relation(fields: [warrantyId], references: [id], onDelete: SetNull)
+  locationId      String?       @map("location_id")
+  location        Location?     @relation(fields: [locationId], references: [id])
+  criticality     Criticality   @default(MEDIUM)
+  status          CiStatus      @default(ACTIVE)
+  createdAt       DateTime      @default(now()) @map("created_at")
 
   relationshipsAsParent CiRelationship[] @relation("ParentCi")
   relationshipsAsChild  CiRelationship[] @relation("ChildCi")
@@ -273,6 +279,50 @@ model ConfigurationItem {
   automationRuns        AutomationRun[]
 
   @@map("configuration_items")
+}
+
+// docs/08-schema-base-de-donnees.md §4.3 : fabricant et modèle d'un CI,
+// normalisés pour éviter la duplication (ex. "Dell" saisi une seule fois).
+model Manufacturer {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  models             Model[]
+  configurationItems ConfigurationItem[]
+
+  @@map("manufacturers")
+}
+
+model Model {
+  id             String       @id @default(uuid())
+  name           String
+  manufacturerId String       @map("manufacturer_id")
+  manufacturer   Manufacturer @relation(fields: [manufacturerId], references: [id])
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  configurationItems ConfigurationItem[]
+
+  @@unique([manufacturerId, name])
+  @@map("models")
+}
+
+// US-24 : garantie d'un CI, consultée par le technicien avant de decider
+// reparer vs remplacer. Relation 1-1 avec le CI (warrantyId est @unique
+// cote ConfigurationItem) — onDelete: SetNull pour permettre de retirer
+// une garantie sans devoir d'abord détacher le CI.
+model Warranty {
+  id              String   @id @default(uuid())
+  provider        String
+  startDate       DateTime @map("start_date")
+  endDate         DateTime @map("end_date")
+  referenceNumber String?  @map("reference_number")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  configurationItem ConfigurationItem?
+
+  @@map("warranties")
 }
 
 enum Criticality {

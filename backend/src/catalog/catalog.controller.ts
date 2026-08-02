@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CatalogService } from './catalog.service';
@@ -32,5 +32,22 @@ export class CatalogController {
   @Get('ci-types')
   findAllCiTypes() {
     return this.catalogService.findAllCiTypes();
+  }
+
+  @ApiOperation({
+    summary: 'Lister les fabricants connus (suggestions pour un CI)',
+  })
+  @Get('manufacturers')
+  findAllManufacturers() {
+    return this.catalogService.findAllManufacturers();
+  }
+
+  @ApiOperation({
+    summary:
+      "Lister les modèles connus d'un fabricant (suggestions pour un CI)",
+  })
+  @Get('models')
+  findModelsByManufacturer(@Query('manufacturerId') manufacturerId?: string) {
+    return this.catalogService.findModelsByManufacturer(manufacturerId);
   }
 }
