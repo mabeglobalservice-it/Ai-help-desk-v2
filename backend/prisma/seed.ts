@@ -26,6 +26,47 @@ const ciTypes = [
   'Service métier',
 ];
 
+// docs/09-architecture-agents-ia.md §3, docs/11-documentation-api.md §6 :
+// registre des agents IA, activés par défaut.
+const aiAgents = [
+  {
+    name: 'DIAGNOSTIC',
+    description:
+      "Analyse la description d'un ticket pour suggérer titre, catégorie et priorité.",
+  },
+  {
+    name: 'DOCUMENTATION',
+    description:
+      "Propose un article de base de connaissances à partir d'un ticket résolu.",
+  },
+  {
+    name: 'AUTOMATION',
+    description:
+      "Prépare une suggestion de script d'automatisation à partir du contexte d'un ticket.",
+  },
+  {
+    name: 'SUPERVISOR',
+    description:
+      'Analyse les tendances de pannes par modèle de CI pour le superviseur (US-27).',
+  },
+  {
+    name: 'INVENTORY',
+    description:
+      "Répond aux questions sur les actifs (garantie, licence, historique) — lecture seule.",
+  },
+  {
+    name: 'HELPDESK',
+    description: 'Assistance générale employé — non encore implémenté.',
+  },
+] as const;
+
+// docs/11-documentation-api.md §6 : un seul fournisseur actif à la fois.
+const aiProviders = [
+  { provider: 'CLAUDE', isActive: true },
+  { provider: 'OPENAI', isActive: false },
+  { provider: 'AZURE_OPENAI', isActive: false },
+] as const;
+
 async function main() {
   for (const name of categories) {
     await prisma.ticketCategory.upsert({
@@ -57,6 +98,22 @@ async function main() {
         priorityId: created.id,
         resolutionHours: priority.slaResolutionHours,
       },
+    });
+  }
+
+  for (const agent of aiAgents) {
+    await prisma.aiAgent.upsert({
+      where: { name: agent.name },
+      update: { description: agent.description },
+      create: agent,
+    });
+  }
+
+  for (const providerConfig of aiProviders) {
+    await prisma.aiProviderConfig.upsert({
+      where: { provider: providerConfig.provider },
+      update: {},
+      create: providerConfig,
     });
   }
 }

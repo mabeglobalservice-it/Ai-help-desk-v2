@@ -1023,3 +1023,52 @@ export function decideApproval(
     body: JSON.stringify({ decision, note }),
   });
 }
+
+// docs/11-documentation-api.md §6 : administration des agents IA et du
+// fournisseur actif (réservé à l'Admin).
+export type AiAgentName =
+  | "DIAGNOSTIC"
+  | "DOCUMENTATION"
+  | "AUTOMATION"
+  | "SUPERVISOR"
+  | "INVENTORY"
+  | "HELPDESK";
+
+export interface AiAgent {
+  id: string;
+  name: AiAgentName;
+  description: string;
+  isActive: boolean;
+}
+
+export function getAiAgents(token: string): Promise<AiAgent[]> {
+  return apiFetch<AiAgent[]>("/ai/agents", token);
+}
+
+export function toggleAiAgent(token: string, id: string): Promise<AiAgent> {
+  return apiFetch<AiAgent>(`/ai/agents/${id}/toggle`, token, {
+    method: "PATCH",
+  });
+}
+
+export type AiProviderName = "CLAUDE" | "OPENAI" | "AZURE_OPENAI";
+
+export interface AiProviderConfig {
+  id: string;
+  provider: AiProviderName;
+  isActive: boolean;
+}
+
+export function getAiProviders(token: string): Promise<AiProviderConfig[]> {
+  return apiFetch<AiProviderConfig[]>("/ai/providers", token);
+}
+
+export function setActiveAiProvider(
+  token: string,
+  provider: AiProviderName,
+): Promise<AiProviderConfig> {
+  return apiFetch<AiProviderConfig>("/ai/providers/active", token, {
+    method: "PATCH",
+    body: JSON.stringify({ provider }),
+  });
+}

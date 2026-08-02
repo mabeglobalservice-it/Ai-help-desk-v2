@@ -509,3 +509,49 @@ enum KnowledgeArticleStatus {
   APPROVED
   REJECTED
 }
+
+// docs/11-documentation-api.md §6 (GET/PATCH /ai/agents), docs/08 §4.4 :
+// registre des agents IA nommés, activables/désactivables par un Admin
+// sans redéploiement. Seuls DIAGNOSTIC/DOCUMENTATION/AUTOMATION appellent
+// réellement un LLM aujourd'hui (voir AiService) — SUPERVISOR et INVENTORY
+// désignent des fonctionnalités déjà livrées (US-27, CMDB) qui sont
+// purement analytiques/en lecture seule (docs/09 §3.6/§3.7) et HELPDESK
+// n'a pas encore d'implémentation dédiée ; ces trois sont listés pour que
+// le registre corresponde à docs/08 mais leur bascule n'a pas d'effet.
+model AiAgent {
+  id          String      @id @default(uuid())
+  name        AiAgentName @unique
+  description String
+  isActive    Boolean     @default(true) @map("is_active")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@map("ai_agents")
+}
+
+enum AiAgentName {
+  DIAGNOSTIC
+  DOCUMENTATION
+  AUTOMATION
+  SUPERVISOR
+  INVENTORY
+  HELPDESK
+}
+
+// docs/11-documentation-api.md §6 (GET /ai/providers, PATCH
+// /ai/providers/active) : un seul fournisseur actif à la fois. Seul CLAUDE
+// a une intégration réelle (AiService) ; basculer vers OPENAI/AZURE_OPENAI
+// force le mode dégradé (RM-05) plutôt que d'échouer, faute d'implémentation.
+model AiProviderConfig {
+  id        String          @id @default(uuid())
+  provider  AiProviderName  @unique
+  isActive  Boolean         @default(false) @map("is_active")
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  @@map("ai_provider_configs")
+}
+
+enum AiProviderName {
+  CLAUDE
+  OPENAI
+  AZURE_OPENAI
+}

@@ -119,6 +119,11 @@ export function AppHeader({ title, action }: AppHeaderProps) {
             </Button>
           ) : null}
           {user && user.role === "ADMIN" ? (
+            <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/admin/ai-agents" />}>
+              Agents IA
+            </Button>
+          ) : null}
+          {user && user.role === "ADMIN" ? (
             <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/admin/audit-logs" />}>
               Journal d&apos;audit
             </Button>

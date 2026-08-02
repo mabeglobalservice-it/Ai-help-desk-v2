@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiAgentName, AiProviderName } from '../../generated/prisma/client';
 
 const MODEL = 'claude-sonnet-5';
 
@@ -223,11 +224,30 @@ export class AiService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // docs/11-documentation-api.md §6 : un agent désactivé par un Admin, ou
+  // un fournisseur actif autre que CLAUDE (le seul réellement intégré),
+  // dégrade exactement comme une clé API absente (RM-05) — même chemin de
+  // repli. Ne revérifie pas la présence de la clé API (this.client) :
+  // appelée uniquement après ce contrôle synchrone chez l'appelant, pour
+  // que TypeScript garde le rétrécissement de this.client à travers l'await.
+  private async isAgentAndProviderEnabled(
+    agentName: AiAgentName,
+  ): Promise<boolean> {
+    const [agent, activeProvider] = await Promise.all([
+      this.prisma.aiAgent.findUnique({ where: { name: agentName } }),
+      this.prisma.aiProviderConfig.findUnique({
+        where: { provider: AiProviderName.CLAUDE },
+      }),
+    ]);
+
+    return (agent?.isActive ?? true) && (activeProvider?.isActive ?? true);
+  }
+
   // docs/06-cas-utilisation.md RM-05: le systeme doit rester fonctionnel en
   // mode degrade si l'agent IA est indisponible. Si la cle API est absente,
-  // ou si l'appel echoue pour n'importe quelle raison, on retombe sur un
-  // diagnostic local par mots-cles plutot que de faire echouer la creation
-  // de ticket.
+  // si l'agent/fournisseur est désactivé (docs/11 §6), ou si l'appel
+  // echoue pour n'importe quelle raison, on retombe sur un diagnostic
+  // local par mots-cles plutot que de faire echouer la creation de ticket.
   async diagnoseTicket(description: string): Promise<TicketDiagnosis> {
     const [categories, priorities] = await Promise.all([
       this.prisma.ticketCategory.findMany({ select: { id: true, name: true } }),
@@ -243,9 +263,12 @@ export class AiService {
       );
     }
 
-    if (!this.client) {
+    if (
+      !this.client ||
+      !(await this.isAgentAndProviderEnabled(AiAgentName.DIAGNOSTIC))
+    ) {
       this.logger.warn(
-        'Clé API Anthropic absente : diagnostic en mode dégradé (mots-clés locaux)',
+        'Agent Diagnostic indisponible (clé API absente, agent ou fournisseur désactivé) : mode dégradé (mots-clés locaux)',
       );
       return this.localDiagnose(description, categories, priorities);
     }
@@ -428,9 +451,12 @@ export class AiService {
   async summarizeTicketForKnowledgeArticle(
     input: ResolvedTicketSummaryInput,
   ): Promise<KnowledgeArticleDraft> {
-    if (!this.client) {
+    if (
+      !this.client ||
+      !(await this.isAgentAndProviderEnabled(AiAgentName.DOCUMENTATION))
+    ) {
       this.logger.warn(
-        "Clé API Anthropic absente : proposition d'article en mode dégradé (gabarit local)",
+        "Agent Documentation indisponible (clé API absente, agent ou fournisseur désactivé) : proposition d'article en mode dégradé (gabarit local)",
       );
       return this.localArticleDraft(input);
     }
@@ -539,9 +565,12 @@ export class AiService {
   ): Promise<AutomationSuggestion | null> {
     if (scripts.length === 0) return null;
 
-    if (!this.client) {
+    if (
+      !this.client ||
+      !(await this.isAgentAndProviderEnabled(AiAgentName.AUTOMATION))
+    ) {
       this.logger.warn(
-        "Clé API Anthropic absente : suggestion d'automatisation en mode dégradé (mots-clés locaux)",
+        "Agent Automation indisponible (clé API absente, agent ou fournisseur désactivé) : suggestion d'automatisation en mode dégradé (mots-clés locaux)",
       );
       return this.localSuggestAutomation(ticket, scripts);
     }
