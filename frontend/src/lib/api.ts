@@ -714,6 +714,7 @@ export interface TicketDiagnosis {
   priorityId: string;
   priorityName: string;
   degraded: boolean;
+  conversationId: string;
 }
 
 export function aiDiagnoseTicket(token: string, description: string): Promise<TicketDiagnosis> {
@@ -1070,5 +1071,73 @@ export function setActiveAiProvider(
   return apiFetch<AiProviderConfig>("/ai/providers/active", token, {
     method: "PATCH",
     body: JSON.stringify({ provider }),
+  });
+}
+
+// docs/11-documentation-api.md §6 : GET /ai/conversations/:id/cost, reserve
+// aux roles SUPERVISOR et ADMIN.
+export interface AiConversationCost {
+  conversationId: string;
+  provider: string;
+  model: string;
+  callCount: number;
+  totalTokenCost: number;
+  messages: Array<{
+    id: string;
+    role: "USER" | "AGENT";
+    responseTimeMs: number | null;
+    tokenCost: number | null;
+    createdAt: string;
+  }>;
+}
+
+export function getAiConversationCost(
+  token: string,
+  conversationId: string,
+): Promise<AiConversationCost> {
+  return apiFetch<AiConversationCost>(
+    `/ai/conversations/${conversationId}/cost`,
+    token,
+  );
+}
+
+// docs/11-documentation-api.md §5 : historique et feedback d'une
+// conversation de diagnostic (docs/08 §4.4).
+export type AiMessageRole = "USER" | "AGENT";
+
+export interface AiConversationMessage {
+  id: string;
+  role: AiMessageRole;
+  content: string;
+  responseTimeMs: number | null;
+  tokenCost: string | null;
+  createdAt: string;
+}
+
+export interface AiConversationDetail {
+  id: string;
+  userId: string;
+  ticketId: string | null;
+  provider: string;
+  model: string;
+  startedAt: string;
+  messages: AiConversationMessage[];
+}
+
+export function getDiagnosticConversation(
+  token: string,
+  conversationId: string,
+): Promise<AiConversationDetail> {
+  return apiFetch<AiConversationDetail>(`/diagnostics/${conversationId}`, token);
+}
+
+export function addDiagnosticFeedback(
+  token: string,
+  conversationId: string,
+  payload: { wasHelpful: boolean; comment?: string },
+): Promise<{ id: string; wasHelpful: boolean; comment: string | null }> {
+  return apiFetch(`/diagnostics/${conversationId}/feedback`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }

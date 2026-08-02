@@ -42,6 +42,8 @@ model User {
   automationRunsExecuted    AutomationRun[]       @relation("AutomationRunsExecuted")
   approvalsDecided          Approval[]
   knowledgeArticlesApproved KnowledgeArticle[]
+  aiConversations           AiConversation[]
+  aiFeedbackGiven           AiFeedback[]
 
   @@map("users")
 }
@@ -130,6 +132,7 @@ model Ticket {
   notifications     Notification[]
   automationRuns    AutomationRun[]
   knowledgeArticles KnowledgeArticle[]
+  aiConversations   AiConversation[]
 
   @@index([status, priorityId, technicianId, categoryId])
   @@map("tickets")
@@ -525,6 +528,8 @@ model AiAgent {
   isActive    Boolean     @default(true) @map("is_active")
   createdAt   DateTime    @default(now()) @map("created_at")
 
+  messages AiMessage[]
+
   @@map("ai_agents")
 }
 
@@ -554,4 +559,63 @@ enum AiProviderName {
   CLAUDE
   OPENAI
   AZURE_OPENAI
+}
+
+// docs/11-documentation-api.md §5 (POST /diagnostics, GET
+// /diagnostics/:conversationId, POST /diagnostics/:conversationId/feedback)
+// et §6 (GET /ai/conversations/:id/cost), docs/08 §4.4 : historique d'une
+// conversation de diagnostic (Agent Diagnostic uniquement pour l'instant),
+// avec le coût IA (tokens) par message pour permettre le suivi de coût.
+model AiConversation {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id])
+  ticketId  String?   @map("ticket_id")
+  ticket    Ticket?   @relation(fields: [ticketId], references: [id])
+  provider  String
+  model     String
+  startedAt DateTime  @default(now()) @map("started_at")
+
+  messages AiMessage[]
+
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id              String        @id @default(uuid())
+  conversationId  String        @map("conversation_id")
+  conversation    AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agentId         String?       @map("agent_id")
+  agent           AiAgent?      @relation(fields: [agentId], references: [id])
+  role            AiMessageRole
+  content         String
+  // RM-03 : seuil de confiance (>= 0.95) — nullable car l'API Anthropic ne
+  // renvoie pas nativement un score de confiance pour les appels tool-use
+  // actuels ; le champ existe pour un futur agent qui en fournirait un.
+  confidenceScore Decimal?      @map("confidence_score") @db.Decimal(4, 3)
+  responseTimeMs  Int?          @map("response_time_ms")
+  tokenCost       Decimal?      @map("token_cost") @db.Decimal(10, 6)
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  feedback AiFeedback[]
+
+  @@map("ai_messages")
+}
+
+enum AiMessageRole {
+  USER
+  AGENT
+}
+
+model AiFeedback {
+  id           String    @id @default(uuid())
+  messageId    String    @map("message_id")
+  message      AiMessage @relation(fields: [messageId], references: [id])
+  technicianId String    @map("technician_id")
+  technician   User      @relation(fields: [technicianId], references: [id])
+  wasHelpful   Boolean   @map("was_helpful")
+  comment      String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@map("ai_feedback")
 }

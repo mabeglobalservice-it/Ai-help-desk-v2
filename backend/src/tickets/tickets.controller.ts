@@ -57,8 +57,9 @@ export class TicketsController {
   @Roles(Role.EMPLOYEE)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('ai-diagnose')
-  aiDiagnose(@Body() dto: AiDiagnoseDto) {
-    return this.aiService.diagnoseTicket(dto.description);
+  aiDiagnose(@Body() dto: AiDiagnoseDto, @Req() req: Request) {
+    const requester = req.user as { userId: string };
+    return this.aiService.diagnoseTicket(dto.description, requester.userId);
   }
 
   // RM-04: un employe ne voit que ses propres tickets, un technicien ne voit

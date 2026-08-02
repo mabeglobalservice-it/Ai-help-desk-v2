@@ -9,6 +9,8 @@ describe('AiService', () => {
     priority: { findMany: jest.Mock };
     aiAgent: { findUnique: jest.Mock };
     aiProviderConfig: { findUnique: jest.Mock };
+    aiConversation: { create: jest.Mock };
+    aiMessage: { create: jest.Mock };
   };
   const originalApiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -34,6 +36,10 @@ describe('AiService', () => {
       // tests that need a disabled agent/provider override this explicitly.
       aiAgent: { findUnique: jest.fn().mockResolvedValue(null) },
       aiProviderConfig: { findUnique: jest.fn().mockResolvedValue(null) },
+      aiConversation: {
+        create: jest.fn().mockResolvedValue({ id: 'conv-1' }),
+      },
+      aiMessage: { create: jest.fn().mockResolvedValue({ id: 'msg-1' }) },
     };
 
     service = await buildService();
@@ -62,10 +68,19 @@ describe('AiService', () => {
     it('falls back to local keyword diagnosis when no API key is configured', async () => {
       const result = await service.diagnoseTicket(
         "L'imprimante ne s'allume plus depuis ce matin",
+        'user-1',
       );
 
       expect(result.degraded).toBe(true);
       expect(result.categoryId).toBe('cat-materiel');
+      expect(result.conversationId).toBe('conv-1');
+      expect(prisma.aiConversation.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'user-1',
+          provider: 'CLAUDE',
+          model: 'claude-sonnet-5',
+        },
+      });
     });
 
     // docs/11-documentation-api.md §6 : agent désactivé par un Admin.
@@ -75,7 +90,10 @@ describe('AiService', () => {
       prisma.aiProviderConfig.findUnique.mockResolvedValue({ isActive: true });
       service = await buildService();
 
-      const result = await service.diagnoseTicket('Problème quelconque');
+      const result = await service.diagnoseTicket(
+        'Problème quelconque',
+        'user-1',
+      );
 
       expect(result.degraded).toBe(true);
       expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({

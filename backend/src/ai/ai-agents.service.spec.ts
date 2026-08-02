@@ -15,6 +15,7 @@ describe('AiAgentsService', () => {
       updateMany: jest.Mock;
       update: jest.Mock;
     };
+    aiConversation: { findUnique: jest.Mock };
     $transaction: jest.Mock;
   };
 
@@ -31,6 +32,7 @@ describe('AiAgentsService', () => {
         updateMany: jest.fn(),
         update: jest.fn(),
       },
+      aiConversation: { findUnique: jest.fn() },
       $transaction: jest.fn(),
     };
 
@@ -105,6 +107,55 @@ describe('AiAgentsService', () => {
         data: { isActive: true },
       });
       expect(result).toEqual({ provider: 'OPENAI', isActive: true });
+    });
+  });
+
+  describe('getConversationCost', () => {
+    it('throws NotFoundException when the conversation does not exist', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(null);
+
+      await expect(service.getConversationCost('missing')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    // docs/11-documentation-api.md §6 : le coût ne compte que les messages
+    // de l'agent issus d'un appel réel (tokenCost non nul) ; les réponses en
+    // mode dégradé (RM-05) ont un tokenCost nul et ne comptent pas.
+    it('sums tokenCost across agent messages only, ignoring degraded (null-cost) messages', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        provider: 'CLAUDE',
+        model: 'claude-sonnet-5',
+        messages: [
+          {
+            id: 'msg-1',
+            role: 'USER',
+            responseTimeMs: null,
+            tokenCost: null,
+            createdAt: new Date(),
+          },
+          {
+            id: 'msg-2',
+            role: 'AGENT',
+            responseTimeMs: 850,
+            tokenCost: 0.0123,
+            createdAt: new Date(),
+          },
+          {
+            id: 'msg-3',
+            role: 'AGENT',
+            responseTimeMs: null,
+            tokenCost: null,
+            createdAt: new Date(),
+          },
+        ],
+      });
+
+      const result = await service.getConversationCost('conv-1');
+
+      expect(result.callCount).toBe(2);
+      expect(result.totalTokenCost).toBeCloseTo(0.0123);
     });
   });
 });

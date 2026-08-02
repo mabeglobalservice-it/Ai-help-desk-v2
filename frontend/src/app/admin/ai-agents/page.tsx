@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import {
   ApiError,
   getAiAgents,
+  getAiConversationCost,
   getAiProviders,
   setActiveAiProvider,
   toggleAiAgent,
   type AiAgent,
   type AiAgentName,
+  type AiConversationCost,
   type AiProviderConfig,
   type AiProviderName,
 } from "@/lib/api";
@@ -19,6 +21,7 @@ import { AppHeader } from "@/components/app-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -55,6 +58,10 @@ export default function AdminAiAgentsPage() {
   const [providerActionError, setProviderActionError] = useState<string | null>(null);
   const [togglingAgentId, setTogglingAgentId] = useState<string | null>(null);
   const [activatingProvider, setActivatingProvider] = useState<AiProviderName | null>(null);
+  const [conversationIdInput, setConversationIdInput] = useState("");
+  const [conversationCost, setConversationCost] = useState<AiConversationCost | null>(null);
+  const [costError, setCostError] = useState<string | null>(null);
+  const [costLoading, setCostLoading] = useState(false);
 
   const isAdmin = user?.role === "ADMIN";
 
@@ -127,6 +134,30 @@ export default function AdminAiAgentsPage() {
       );
     } finally {
       setActivatingProvider(null);
+    }
+  }
+
+  async function handleLookupCost() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    if (!conversationIdInput.trim()) return;
+    setCostError(null);
+    setConversationCost(null);
+    setCostLoading(true);
+    try {
+      const cost = await getAiConversationCost(token, conversationIdInput.trim());
+      setConversationCost(cost);
+    } catch (err) {
+      setCostError(
+        err instanceof ApiError && err.status === 404
+          ? "Aucune conversation trouvée avec cet identifiant."
+          : "Impossible de récupérer le coût de cette conversation.",
+      );
+    } finally {
+      setCostLoading(false);
     }
   }
 
@@ -284,6 +315,46 @@ export default function AdminAiAgentsPage() {
                   </div>
                 </>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl">Coût d&apos;une conversation IA</CardTitle>
+              <CardDescription>
+                docs/11 §6 : coût cumulé (tokens) d&apos;une conversation de diagnostic, à partir
+                de l&apos;identifiant renvoyé par l&apos;analyse IA d&apos;un ticket.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2">
+                <Input
+                  value={conversationIdInput}
+                  onChange={(e) => setConversationIdInput(e.target.value)}
+                  placeholder="Identifiant de la conversation"
+                  className="max-w-md"
+                />
+                <Button variant="outline" size="sm" disabled={costLoading} onClick={handleLookupCost}>
+                  {costLoading ? "..." : "Rechercher"}
+                </Button>
+              </div>
+              {costError ? (
+                <Alert variant="destructive" className="mt-4">
+                  <AlertDescription>{costError}</AlertDescription>
+                </Alert>
+              ) : null}
+              {conversationCost ? (
+                <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                  <dt className="text-muted-foreground">Fournisseur</dt>
+                  <dd>{conversationCost.provider}</dd>
+                  <dt className="text-muted-foreground">Modèle</dt>
+                  <dd>{conversationCost.model}</dd>
+                  <dt className="text-muted-foreground">Appels IA</dt>
+                  <dd>{conversationCost.callCount}</dd>
+                  <dt className="text-muted-foreground">Coût total estimé</dt>
+                  <dd>{conversationCost.totalTokenCost.toFixed(6)} $</dd>
+                </dl>
+              ) : null}
             </CardContent>
           </Card>
         </div>

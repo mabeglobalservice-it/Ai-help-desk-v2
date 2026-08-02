@@ -13,6 +13,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { CommentsModule } from './comments/comments.module';
 import { ConfigurationItemsModule } from './configuration-items/configuration-items.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { DiagnosticsModule } from './diagnostics/diagnostics.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -45,6 +46,7 @@ import { UsersModule } from './users/users.module';
     RealtimeModule,
     KnowledgeModule,
     AutomationModule,
+    DiagnosticsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

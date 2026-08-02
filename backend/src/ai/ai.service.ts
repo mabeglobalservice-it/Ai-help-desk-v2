@@ -5,9 +5,19 @@ import {
 } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
-import { AiAgentName, AiProviderName } from '../../generated/prisma/client';
+import {
+  AiAgentName,
+  AiMessageRole,
+  AiProviderName,
+} from '../../generated/prisma/client';
 
 const MODEL = 'claude-sonnet-5';
+
+// docs/11-documentation-api.md §6 "GET /ai/conversations/:id/cost" : tarifs
+// Anthropic par tranche de 1000 jetons, utilisés uniquement pour estimer le
+// coût affiché au superviseur/admin — n'affecte jamais la facturation réelle.
+const INPUT_TOKEN_COST_PER_1K = 0.003;
+const OUTPUT_TOKEN_COST_PER_1K = 0.015;
 
 const SYSTEM_PROMPT =
   "Tu es un assistant de triage pour un service d'assistance informatique interne. " +
@@ -88,7 +98,7 @@ export interface AutomationSuggestion {
 
 const NO_SUGGESTION = 'aucun';
 
-export interface TicketDiagnosis {
+interface DiagnosisResult {
   title: string;
   categoryId: string;
   categoryName: string;
@@ -97,6 +107,14 @@ export interface TicketDiagnosis {
   // RM-05: true when this suggestion came from the local keyword fallback
   // rather than the AI provider (which was unavailable or failed)
   degraded: boolean;
+}
+
+export interface TicketDiagnosis extends DiagnosisResult {
+  // docs/08-architecture-ia.md §4.4, docs/11 §5/§6 : identifie la
+  // conversation persistée pour cette analyse, afin de retrouver son
+  // historique (/diagnostics/:conversationId) et son coût
+  // (/ai/conversations/:id/cost).
+  conversationId: string;
 }
 
 interface CategoryOption {
@@ -230,9 +248,11 @@ export class AiService {
   // repli. Ne revérifie pas la présence de la clé API (this.client) :
   // appelée uniquement après ce contrôle synchrone chez l'appelant, pour
   // que TypeScript garde le rétrécissement de this.client à travers l'await.
-  private async isAgentAndProviderEnabled(
+  // Renvoie aussi l'id de l'agent (quand il existe) pour éviter une requête
+  // Prisma supplémentaire lors de la persistance d'AiMessage.agentId.
+  private async checkAgentStatus(
     agentName: AiAgentName,
-  ): Promise<boolean> {
+  ): Promise<{ enabled: boolean; agentId: string | null }> {
     const [agent, activeProvider] = await Promise.all([
       this.prisma.aiAgent.findUnique({ where: { name: agentName } }),
       this.prisma.aiProviderConfig.findUnique({
@@ -240,7 +260,45 @@ export class AiService {
       }),
     ]);
 
-    return (agent?.isActive ?? true) && (activeProvider?.isActive ?? true);
+    return {
+      enabled: (agent?.isActive ?? true) && (activeProvider?.isActive ?? true),
+      agentId: agent?.id ?? null,
+    };
+  }
+
+  private computeTokenCost(usage: Anthropic.Usage): number {
+    return (
+      (usage.input_tokens / 1000) * INPUT_TOKEN_COST_PER_1K +
+      (usage.output_tokens / 1000) * OUTPUT_TOKEN_COST_PER_1K
+    );
+  }
+
+  // docs/08-architecture-ia.md §4.4 : chaque analyse (mode IA ou dégradé)
+  // laisse une trace dans l'historique des conversations, consultable via
+  // GET /diagnostics/:conversationId (docs/11 §5) — y compris en mode
+  // dégradé, pour la visibilité du superviseur (responseTimeMs/tokenCost
+  // restent alors null, faute d'appel réel au fournisseur IA).
+  private async recordAgentMessage(
+    conversationId: string,
+    agentId: string | null,
+    diagnosis: DiagnosisResult,
+    responseTimeMs: number | null,
+    tokenCost: number | null,
+  ): Promise<void> {
+    await this.prisma.aiMessage.create({
+      data: {
+        conversationId,
+        agentId: agentId ?? undefined,
+        role: AiMessageRole.AGENT,
+        content:
+          `Titre suggéré : ${diagnosis.title}\n` +
+          `Catégorie : ${diagnosis.categoryName}\n` +
+          `Priorité : ${diagnosis.priorityName}` +
+          (diagnosis.degraded ? ' (mode dégradé)' : ''),
+        responseTimeMs: responseTimeMs ?? undefined,
+        tokenCost: tokenCost ?? undefined,
+      },
+    });
   }
 
   // docs/06-cas-utilisation.md RM-05: le systeme doit rester fonctionnel en
@@ -248,7 +306,10 @@ export class AiService {
   // si l'agent/fournisseur est désactivé (docs/11 §6), ou si l'appel
   // echoue pour n'importe quelle raison, on retombe sur un diagnostic
   // local par mots-cles plutot que de faire echouer la creation de ticket.
-  async diagnoseTicket(description: string): Promise<TicketDiagnosis> {
+  async diagnoseTicket(
+    description: string,
+    userId: string,
+  ): Promise<TicketDiagnosis> {
     const [categories, priorities] = await Promise.all([
       this.prisma.ticketCategory.findMany({ select: { id: true, name: true } }),
       this.prisma.priority.findMany({
@@ -263,29 +324,66 @@ export class AiService {
       );
     }
 
-    if (
-      !this.client ||
-      !(await this.isAgentAndProviderEnabled(AiAgentName.DIAGNOSTIC))
-    ) {
+    const conversation = await this.prisma.aiConversation.create({
+      data: { userId, provider: AiProviderName.CLAUDE, model: MODEL },
+    });
+    await this.prisma.aiMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: AiMessageRole.USER,
+        content: description,
+      },
+    });
+
+    const { enabled, agentId } = await this.checkAgentStatus(
+      AiAgentName.DIAGNOSTIC,
+    );
+
+    if (!this.client || !enabled) {
       this.logger.warn(
         'Agent Diagnostic indisponible (clé API absente, agent ou fournisseur désactivé) : mode dégradé (mots-clés locaux)',
       );
-      return this.localDiagnose(description, categories, priorities);
+      const diagnosis = this.localDiagnose(description, categories, priorities);
+      await this.recordAgentMessage(
+        conversation.id,
+        agentId,
+        diagnosis,
+        null,
+        null,
+      );
+      return { ...diagnosis, conversationId: conversation.id };
     }
 
     try {
-      return await this.aiDiagnose(
+      const startedAt = Date.now();
+      const { diagnosis, usage } = await this.aiDiagnose(
         this.client,
         description,
         categories,
         priorities,
       );
+      await this.recordAgentMessage(
+        conversation.id,
+        agentId,
+        diagnosis,
+        Date.now() - startedAt,
+        this.computeTokenCost(usage),
+      );
+      return { ...diagnosis, conversationId: conversation.id };
     } catch (error) {
       this.logger.error(
         "Échec de l'analyse IA, repli en mode dégradé (mots-clés locaux)",
         error,
       );
-      return this.localDiagnose(description, categories, priorities);
+      const diagnosis = this.localDiagnose(description, categories, priorities);
+      await this.recordAgentMessage(
+        conversation.id,
+        agentId,
+        diagnosis,
+        null,
+        null,
+      );
+      return { ...diagnosis, conversationId: conversation.id };
     }
   }
 
@@ -294,7 +392,7 @@ export class AiService {
     description: string,
     categories: CategoryOption[],
     priorities: PriorityOption[],
-  ): Promise<TicketDiagnosis> {
+  ): Promise<{ diagnosis: DiagnosisResult; usage: Anthropic.Usage }> {
     const categoryList = categories
       .map((category) => `- ${category.id}: ${category.name}`)
       .join('\n');
@@ -367,12 +465,15 @@ export class AiService {
       priorities.find((p) => p.id === suggestion.priorityId) ?? priorities[0];
 
     return {
-      title: suggestion.title?.trim() || description.slice(0, 80),
-      categoryId: category.id,
-      categoryName: category.name,
-      priorityId: priority.id,
-      priorityName: priority.name,
-      degraded: false,
+      diagnosis: {
+        title: suggestion.title?.trim() || description.slice(0, 80),
+        categoryId: category.id,
+        categoryName: category.name,
+        priorityId: priority.id,
+        priorityName: priority.name,
+        degraded: false,
+      },
+      usage: response.usage,
     };
   }
 
@@ -380,7 +481,7 @@ export class AiService {
     description: string,
     categories: CategoryOption[],
     priorities: PriorityOption[],
-  ): TicketDiagnosis {
+  ): DiagnosisResult {
     const normalizedDescription = normalize(description);
 
     const category = this.pickCategory(normalizedDescription, categories);
@@ -453,7 +554,7 @@ export class AiService {
   ): Promise<KnowledgeArticleDraft> {
     if (
       !this.client ||
-      !(await this.isAgentAndProviderEnabled(AiAgentName.DOCUMENTATION))
+      !(await this.checkAgentStatus(AiAgentName.DOCUMENTATION)).enabled
     ) {
       this.logger.warn(
         "Agent Documentation indisponible (clé API absente, agent ou fournisseur désactivé) : proposition d'article en mode dégradé (gabarit local)",
@@ -567,7 +668,7 @@ export class AiService {
 
     if (
       !this.client ||
-      !(await this.isAgentAndProviderEnabled(AiAgentName.AUTOMATION))
+      !(await this.checkAgentStatus(AiAgentName.AUTOMATION)).enabled
     ) {
       this.logger.warn(
         "Agent Automation indisponible (clé API absente, agent ou fournisseur désactivé) : suggestion d'automatisation en mode dégradé (mots-clés locaux)",

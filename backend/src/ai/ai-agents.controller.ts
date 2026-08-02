@@ -53,4 +53,14 @@ export class AiAgentsController {
   setActiveProvider(@Body() dto: SetActiveAiProviderDto) {
     return this.aiAgentsService.setActiveProvider(dto.provider);
   }
+
+  @ApiOperation({
+    summary: "Coût cumulé d'une conversation IA (tokens, appels)",
+    description: 'Réservé aux rôles SUPERVISOR et ADMIN',
+  })
+  @Roles(Role.SUPERVISOR, Role.ADMIN)
+  @Get('conversations/:id/cost')
+  getConversationCost(@Param('id') id: string) {
+    return this.aiAgentsService.getConversationCost(id);
+  }
 }
