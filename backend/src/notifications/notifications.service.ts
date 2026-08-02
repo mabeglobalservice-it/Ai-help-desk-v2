@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import { ChatNotificationsService } from '../chat-notifications/chat-notifications.service';
 import { NotificationType } from '../../generated/prisma/client';
 
 interface CreateNotificationInput {
@@ -17,10 +18,13 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly realtimeGateway: RealtimeGateway,
+    private readonly chatNotificationsService: ChatNotificationsService,
   ) {}
 
   // docs/11-documentation-api.md §13: notification.new diffuse en temps
   // reel au destinataire, en plus de l'email et de la persistance en base.
+  // docs/02-brd.md BR-12 : le meme evenement alimente aussi Teams/Slack
+  // (best-effort, silencieux si aucun webhook n'est configure).
   async create(input: CreateNotificationInput) {
     const notification = await this.prisma.notification.create({ data: input });
 
@@ -35,17 +39,24 @@ export class NotificationsService {
       select: { email: true, displayName: true },
     });
 
+    const ticketUrl = input.ticketId
+      ? `${process.env.FRONTEND_URL ?? 'http://localhost:3002'}/tickets/${input.ticketId}`
+      : undefined;
+
     if (recipient) {
       await this.emailService.sendNotificationEmail({
         to: recipient.email,
         displayName: recipient.displayName,
         type: input.type,
         message: input.message,
-        ticketUrl: input.ticketId
-          ? `${process.env.FRONTEND_URL ?? 'http://localhost:3002'}/tickets/${input.ticketId}`
-          : undefined,
+        ticketUrl,
       });
     }
+
+    await this.chatNotificationsService.sendNotification({
+      message: input.message,
+      ticketUrl,
+    });
 
     return notification;
   }
