@@ -42,6 +42,17 @@ export class ConfigurationItemsController {
   }
 
   @ApiOperation({
+    summary: "Licences et leur date d'expiration (US-23)",
+    description:
+      "Réservé aux rôles SUPERVISOR, ADMIN — triées par date d'expiration, pour anticiper les renouvellements. Déclaré avant :id pour éviter toute ambiguïté de routage.",
+  })
+  @Roles(Role.SUPERVISOR, Role.ADMIN)
+  @Get('licenses')
+  getLicenses() {
+    return this.configurationItemsService.getLicenses();
+  }
+
+  @ApiOperation({
     summary: "Détail d'un Configuration Item, avec les tickets qui y sont liés",
     description: 'Accessible à tout utilisateur authentifié',
   })

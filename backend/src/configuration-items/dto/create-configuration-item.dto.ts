@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 import { Criticality, CiStatus } from '../../../generated/prisma/client';
 import { SetCiWarrantyDto } from './set-ci-warranty.dto';
+import { SetCiLicenseDto } from './set-ci-license.dto';
 
 export class CreateConfigurationItemDto {
   @ApiProperty({
@@ -69,4 +70,10 @@ export class CreateConfigurationItemDto {
   @ValidateNested()
   @Type(() => SetCiWarrantyDto)
   warranty?: SetCiWarrantyDto;
+
+  @ApiPropertyOptional({ type: SetCiLicenseDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SetCiLicenseDto)
+  license?: SetCiLicenseDto;
 }

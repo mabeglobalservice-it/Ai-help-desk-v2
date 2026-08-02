@@ -107,6 +107,14 @@ export default function AdminConfigurationItemDetailPage() {
   const [warrantyError, setWarrantyError] = useState<string | null>(null);
   const [isSavingWarranty, setIsSavingWarranty] = useState(false);
 
+  const [isEditingLicense, setIsEditingLicense] = useState(false);
+  const [licenseVendor, setLicenseVendor] = useState("");
+  const [licenseExpiresAt, setLicenseExpiresAt] = useState("");
+  const [licensePurchasedAt, setLicensePurchasedAt] = useState("");
+  const [licenseReferenceNumber, setLicenseReferenceNumber] = useState("");
+  const [licenseError, setLicenseError] = useState<string | null>(null);
+  const [isSavingLicense, setIsSavingLicense] = useState(false);
+
   const isViewer =
     user?.role === "TECHNICIAN" || user?.role === "SUPERVISOR" || user?.role === "ADMIN";
   const isPrivileged = user?.role === "SUPERVISOR" || user?.role === "ADMIN";
@@ -284,6 +292,64 @@ export default function AdminConfigurationItemDetailPage() {
       );
     } finally {
       setIsSavingWarranty(false);
+    }
+  }
+
+  function startEditingLicense() {
+    setLicenseVendor(ci?.license?.vendor ?? "");
+    setLicenseExpiresAt(ci?.license?.expiresAt.slice(0, 10) ?? "");
+    setLicensePurchasedAt(ci?.license?.purchasedAt?.slice(0, 10) ?? "");
+    setLicenseReferenceNumber(ci?.license?.referenceNumber ?? "");
+    setLicenseError(null);
+    setIsEditingLicense(true);
+  }
+
+  async function handleSaveLicense() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setLicenseError(null);
+    setIsSavingLicense(true);
+    try {
+      await updateConfigurationItem(token, id, {
+        license: {
+          vendor: licenseVendor,
+          expiresAt: licenseExpiresAt,
+          purchasedAt: licensePurchasedAt || undefined,
+          referenceNumber: licenseReferenceNumber || undefined,
+        },
+      });
+      setIsEditingLicense(false);
+      await load(token);
+    } catch (err) {
+      setLicenseError(
+        err instanceof ApiError ? err.message : "Impossible d'enregistrer la licence pour le moment.",
+      );
+    } finally {
+      setIsSavingLicense(false);
+    }
+  }
+
+  async function handleClearLicense() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setLicenseError(null);
+    setIsSavingLicense(true);
+    try {
+      await updateConfigurationItem(token, id, { clearLicense: true });
+      setIsEditingLicense(false);
+      await load(token);
+    } catch (err) {
+      setLicenseError(
+        err instanceof ApiError ? err.message : "Impossible de retirer la licence pour le moment.",
+      );
+    } finally {
+      setIsSavingLicense(false);
     }
   }
 
@@ -516,6 +582,132 @@ export default function AdminConfigurationItemDetailPage() {
                     {isPrivileged ? (
                       <Button variant="outline" size="sm" onClick={startEditingWarranty}>
                         Ajouter une garantie
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-xl">Licence</CardTitle>
+                <CardDescription>
+                  US-23 : consulter la date d&apos;expiration pour anticiper le renouvellement.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {licenseError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{licenseError}</AlertDescription>
+                  </Alert>
+                ) : null}
+
+                {isEditingLicense ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="license-vendor">Éditeur</Label>
+                        <Input
+                          id="license-vendor"
+                          value={licenseVendor}
+                          onChange={(event) => setLicenseVendor(event.target.value)}
+                          placeholder="Ex. Microsoft"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="license-reference">Référence (optionnel)</Label>
+                        <Input
+                          id="license-reference"
+                          value={licenseReferenceNumber}
+                          onChange={(event) => setLicenseReferenceNumber(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="license-purchased">Achat (optionnel)</Label>
+                        <Input
+                          id="license-purchased"
+                          type="date"
+                          value={licensePurchasedAt}
+                          onChange={(event) => setLicensePurchasedAt(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="license-expires">Expiration</Label>
+                        <Input
+                          id="license-expires"
+                          type="date"
+                          value={licenseExpiresAt}
+                          onChange={(event) => setLicenseExpiresAt(event.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        disabled={isSavingLicense || !licenseVendor.trim() || !licenseExpiresAt}
+                        onClick={handleSaveLicense}
+                      >
+                        {isSavingLicense ? "Enregistrement..." : "Enregistrer"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isSavingLicense}
+                        onClick={() => setIsEditingLicense(false)}
+                      >
+                        Annuler
+                      </Button>
+                    </div>
+                  </div>
+                ) : ci.license ? (
+                  <div className="space-y-2">
+                    <p className="text-sm">
+                      {ci.license.vendor}
+                      {ci.license.referenceNumber ? ` (${ci.license.referenceNumber})` : null}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Expire le {calendarDateFormatter.format(new Date(ci.license.expiresAt))}
+                    </p>
+                    {(() => {
+                      const expiresAt = new Date(ci.license.expiresAt);
+                      const now = new Date();
+                      const soonThreshold = new Date(now);
+                      soonThreshold.setDate(soonThreshold.getDate() + 60);
+                      const isExpired = expiresAt < now;
+                      const isExpiringSoon = !isExpired && expiresAt <= soonThreshold;
+                      return (
+                        <Badge variant={isExpired ? "destructive" : isExpiringSoon ? "outline" : "secondary"}>
+                          {isExpired
+                            ? "Licence expirée"
+                            : isExpiringSoon
+                              ? "Expire bientôt"
+                              : "Valide"}
+                        </Badge>
+                      );
+                    })()}
+                    {isPrivileged ? (
+                      <div className="flex gap-2 pt-2">
+                        <Button variant="outline" size="sm" onClick={startEditingLicense}>
+                          Modifier
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={isSavingLicense}
+                          onClick={handleClearLicense}
+                        >
+                          Retirer
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Aucune licence enregistrée.</p>
+                    {isPrivileged ? (
+                      <Button variant="outline" size="sm" onClick={startEditingLicense}>
+                        Ajouter une licence
                       </Button>
                     ) : null}
                   </div>

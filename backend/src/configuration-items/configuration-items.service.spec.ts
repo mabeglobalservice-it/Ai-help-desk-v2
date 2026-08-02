@@ -34,6 +34,7 @@ describe('ConfigurationItemsService', () => {
     manufacturer: { upsert: jest.Mock };
     model: { upsert: jest.Mock; findMany: jest.Mock };
     warranty: { create: jest.Mock; update: jest.Mock; delete: jest.Mock };
+    license: { create: jest.Mock; update: jest.Mock; delete: jest.Mock };
   };
   let auditLogService: { record: jest.Mock };
 
@@ -55,6 +56,11 @@ describe('ConfigurationItemsService', () => {
       manufacturer: { upsert: jest.fn() },
       model: { upsert: jest.fn(), findMany: jest.fn() },
       warranty: {
+        create: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
+      license: {
         create: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
@@ -392,6 +398,169 @@ describe('ConfigurationItemsService', () => {
           data: expect.objectContaining({ warrantyId: null }),
         }),
       );
+    });
+  });
+
+  // US-23 : licence d'un CI et sa date d'expiration
+  describe('create/update — license', () => {
+    it('creates a license and links it to the CI', async () => {
+      prisma.license.create.mockResolvedValue({ id: 'license-1' });
+      prisma.configurationItem.create.mockResolvedValue({
+        id: 'ci-1',
+        name: 'PC-01',
+        inventoryNumber: 'INV-001',
+        status: CiStatus.ACTIVE,
+        criticality: Criticality.MEDIUM,
+      });
+
+      await service.create(
+        {
+          ciTypeId: 'type-1',
+          name: 'PC-01',
+          inventoryNumber: 'INV-001',
+          license: {
+            vendor: 'Microsoft',
+            expiresAt: '2027-01-15',
+          },
+        },
+        'actor-1',
+      );
+
+      expect(prisma.license.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ vendor: 'Microsoft' }),
+        }),
+      );
+      expect(prisma.configurationItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ licenseId: 'license-1' }),
+        }),
+      );
+    });
+
+    it('updates the existing license in place instead of creating a new one', async () => {
+      prisma.configurationItem.findUnique.mockResolvedValue({
+        id: 'ci-1',
+        name: 'PC-01',
+        inventoryNumber: 'INV-001',
+        status: CiStatus.ACTIVE,
+        criticality: Criticality.MEDIUM,
+        manufacturerId: null,
+        modelId: null,
+        licenseId: 'license-1',
+        tickets: [],
+      });
+      prisma.license.update.mockResolvedValue({ id: 'license-1' });
+      prisma.configurationItem.update.mockResolvedValue({
+        id: 'ci-1',
+        name: 'PC-01',
+        inventoryNumber: 'INV-001',
+        status: CiStatus.ACTIVE,
+        criticality: Criticality.MEDIUM,
+      });
+
+      await service.update(
+        'ci-1',
+        { license: { vendor: 'Microsoft 365', expiresAt: '2028-01-15' } },
+        'actor-1',
+      );
+
+      expect(prisma.license.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'license-1' } }),
+      );
+      expect(prisma.license.create).not.toHaveBeenCalled();
+      expect(prisma.configurationItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ licenseId: 'license-1' }),
+        }),
+      );
+    });
+
+    it('deletes the license and clears it from the CI when clearLicense is set', async () => {
+      prisma.configurationItem.findUnique.mockResolvedValue({
+        id: 'ci-1',
+        name: 'PC-01',
+        inventoryNumber: 'INV-001',
+        status: CiStatus.ACTIVE,
+        criticality: Criticality.MEDIUM,
+        manufacturerId: null,
+        modelId: null,
+        licenseId: 'license-1',
+        tickets: [],
+      });
+      prisma.configurationItem.update.mockResolvedValue({
+        id: 'ci-1',
+        name: 'PC-01',
+        inventoryNumber: 'INV-001',
+        status: CiStatus.ACTIVE,
+        criticality: Criticality.MEDIUM,
+      });
+
+      await service.update('ci-1', { clearLicense: true }, 'actor-1');
+
+      expect(prisma.license.delete).toHaveBeenCalledWith({
+        where: { id: 'license-1' },
+      });
+      expect(prisma.configurationItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ licenseId: null }),
+        }),
+      );
+    });
+  });
+
+  describe('getLicenses', () => {
+    function daysFromNow(n: number): Date {
+      return new Date(Date.now() + n * 24 * 60 * 60 * 1000);
+    }
+
+    it('ignores CIs without a license, computes status, and sorts by soonest expiration first', async () => {
+      prisma.configurationItem.findMany.mockResolvedValue([
+        {
+          id: 'ci-valid',
+          name: 'Suite bureautique',
+          inventoryNumber: 'INV-LIC-01',
+          ciType: { name: 'Licence' },
+          license: {
+            id: 'license-valid',
+            vendor: 'Adobe',
+            expiresAt: daysFromNow(300),
+          },
+        },
+        {
+          id: 'ci-expired',
+          name: 'Antivirus',
+          inventoryNumber: 'INV-LIC-02',
+          ciType: { name: 'Licence' },
+          license: {
+            id: 'license-expired',
+            vendor: 'Norton',
+            expiresAt: daysFromNow(-10),
+          },
+        },
+        {
+          id: 'ci-soon',
+          name: 'ERP',
+          inventoryNumber: 'INV-LIC-03',
+          ciType: { name: 'Licence' },
+          license: {
+            id: 'license-soon',
+            vendor: 'SAP',
+            expiresAt: daysFromNow(30),
+          },
+        },
+      ]);
+
+      const result = await service.getLicenses();
+
+      expect(result.map((entry) => entry.ci.id)).toEqual([
+        'ci-expired',
+        'ci-soon',
+        'ci-valid',
+      ]);
+      expect(result[0].status).toBe('EXPIRED');
+      expect(result[1].status).toBe('EXPIRING_SOON');
+      expect(result[2].status).toBe('VALID');
     });
   });
 

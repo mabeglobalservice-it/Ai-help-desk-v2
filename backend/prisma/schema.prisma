@@ -267,6 +267,8 @@ model ConfigurationItem {
   model           Model?        @relation(fields: [modelId], references: [id])
   warrantyId      String?       @unique @map("warranty_id")
   warranty        Warranty?     @relation(fields: [warrantyId], references: [id], onDelete: SetNull)
+  licenseId       String?       @unique @map("license_id")
+  license         License?      @relation(fields: [licenseId], references: [id], onDelete: SetNull)
   locationId      String?       @map("location_id")
   location        Location?     @relation(fields: [locationId], references: [id])
   criticality     Criticality   @default(MEDIUM)
@@ -323,6 +325,24 @@ model Warranty {
   configurationItem ConfigurationItem?
 
   @@map("warranties")
+}
+
+// US-23 : "consulter les licences et leur date d'expiration, afin
+// d'anticiper les renouvellements". Meme forme que Warranty (relation
+// 1-1 optionnelle, onDelete: SetNull) — un CI de type "Licence" (ou tout
+// autre CI rattaché a un logiciel sous licence) peut en porter une.
+model License {
+  id              String    @id @default(uuid())
+  vendor          String
+  expiresAt       DateTime  @map("expires_at")
+  purchasedAt     DateTime? @map("purchased_at")
+  referenceNumber String?   @map("reference_number")
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  configurationItem ConfigurationItem?
+
+  @@map("licenses")
 }
 
 enum Criticality {

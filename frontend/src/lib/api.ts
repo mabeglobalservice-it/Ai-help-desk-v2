@@ -299,6 +299,24 @@ export interface SetWarrantyInput {
   notes?: string;
 }
 
+// US-23 : licence d'un CI et sa date d'expiration, pour anticiper les renouvellements.
+export interface License {
+  id: string;
+  vendor: string;
+  expiresAt: string;
+  purchasedAt: string | null;
+  referenceNumber: string | null;
+  notes: string | null;
+}
+
+export interface SetLicenseInput {
+  vendor: string;
+  expiresAt: string;
+  purchasedAt?: string;
+  referenceNumber?: string;
+  notes?: string;
+}
+
 export type Criticality = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type CiStatus = "ACTIVE" | "IN_REPAIR" | "RETIRED";
 
@@ -312,6 +330,7 @@ export interface ConfigurationItem {
   manufacturer: Manufacturer | null;
   model: (CiModel & { manufacturer: Manufacturer }) | null;
   warranty: Warranty | null;
+  license: License | null;
   criticality: Criticality;
   status: CiStatus;
   createdAt: string;
@@ -369,6 +388,7 @@ export interface CreateConfigurationItemInput {
   manufacturerName?: string;
   modelName?: string;
   warranty?: SetWarrantyInput;
+  license?: SetLicenseInput;
   criticality?: Criticality;
   status?: CiStatus;
 }
@@ -385,6 +405,7 @@ export function createConfigurationItem(
 
 export type UpdateConfigurationItemInput = Partial<CreateConfigurationItemInput> & {
   clearWarranty?: boolean;
+  clearLicense?: boolean;
 };
 
 export function updateConfigurationItem(
@@ -470,6 +491,26 @@ export function getModelReliability(token: string): Promise<ModelReliabilityEntr
     "/configuration-items/models/reliability",
     token,
   );
+}
+
+// US-23 : consulter les licences et leur date d'expiration, pour anticiper
+// les renouvellements.
+export type LicenseStatus = "EXPIRED" | "EXPIRING_SOON" | "VALID";
+
+export interface LicenseListEntry {
+  ci: {
+    id: string;
+    name: string;
+    inventoryNumber: string;
+    ciType: CiType;
+  };
+  license: License;
+  status: LicenseStatus;
+  daysUntilExpiration: number;
+}
+
+export function getLicenses(token: string): Promise<LicenseListEntry[]> {
+  return apiFetch<LicenseListEntry[]>("/configuration-items/licenses", token);
 }
 
 export interface KnowledgeSearchResult {

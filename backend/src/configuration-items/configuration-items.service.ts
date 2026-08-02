@@ -12,6 +12,7 @@ import { UpdateConfigurationItemDto } from './dto/update-configuration-item.dto'
 import { FindConfigurationItemsQueryDto } from './dto/find-configuration-items-query.dto';
 import { CreateCiRelationshipDto } from './dto/create-ci-relationship.dto';
 import { SetCiWarrantyDto } from './dto/set-ci-warranty.dto';
+import { SetCiLicenseDto } from './dto/set-ci-license.dto';
 
 const CI_INCLUDE = {
   ciType: true,
@@ -19,6 +20,7 @@ const CI_INCLUDE = {
   manufacturer: true,
   model: { include: { manufacturer: true } },
   warranty: true,
+  license: true,
 } as const;
 
 const RELATIONSHIP_CI_SELECT = {
@@ -50,6 +52,10 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const AT_RISK_MIN_RECENT_TICKETS = 3;
 const AT_RISK_TICKETS_PER_CI = 1;
 const AT_RISK_TREND_MULTIPLIER = 1.5;
+
+// US-23 : fenêtre "à renouveler bientôt" avant l'expiration d'une licence —
+// assez large pour laisser le temps d'un cycle d'achat/renouvellement.
+const LICENSE_EXPIRING_SOON_DAYS = 60;
 
 // docs/08-schema-base-de-donnees.md §4.3 (CMDB), docs/05-user-stories.md
 // US-22/US-24: gestion des Configuration Items (CI) et de leur lien aux
@@ -337,6 +343,50 @@ export class ConfigurationItemsService {
       );
   }
 
+  // US-23 : "consulter les licences et leur date d'expiration, afin
+  // d'anticiper les renouvellements" — vue agrégée sur tous les CI portant
+  // une licence, triée par date d'expiration (la plus urgente en premier).
+  async getLicenses() {
+    const cis = await this.prisma.configurationItem.findMany({
+      where: { licenseId: { not: null } },
+      select: {
+        id: true,
+        name: true,
+        inventoryNumber: true,
+        ciType: true,
+        license: true,
+      },
+    });
+
+    const now = new Date();
+    const soonThreshold = new Date(
+      now.getTime() + LICENSE_EXPIRING_SOON_DAYS * MS_PER_DAY,
+    );
+
+    return cis
+      .filter(
+        (ci): ci is typeof ci & { license: NonNullable<typeof ci.license> } =>
+          ci.license !== null,
+      )
+      .map((ci) => {
+        const { license, ...ciFields } = ci;
+        const status =
+          license.expiresAt < now
+            ? 'EXPIRED'
+            : license.expiresAt <= soonThreshold
+              ? 'EXPIRING_SOON'
+              : 'VALID';
+        const daysUntilExpiration = Math.ceil(
+          (license.expiresAt.getTime() - now.getTime()) / MS_PER_DAY,
+        );
+
+        return { ci: ciFields, license, status, daysUntilExpiration };
+      })
+      .sort(
+        (a, b) => a.license.expiresAt.getTime() - b.license.expiresAt.getTime(),
+      );
+  }
+
   // US-24 : le fabricant/modèle sont des tables normalisées (docs/08 §4.3)
   // pour éviter la duplication ; on les crée à la volée par leur nom plutôt
   // que d'exposer un écran d'administration séparé pour un si petit référentiel.
@@ -401,11 +451,37 @@ export class ConfigurationItemsService {
     return created.id;
   }
 
+  // US-23 : meme logique que la garantie — cree ou met a jour en place.
+  private async upsertLicense(
+    existingLicenseId: string | null,
+    dto: SetCiLicenseDto,
+  ): Promise<string> {
+    const data = {
+      vendor: dto.vendor,
+      expiresAt: new Date(dto.expiresAt),
+      purchasedAt: dto.purchasedAt ? new Date(dto.purchasedAt) : null,
+      referenceNumber: dto.referenceNumber,
+      notes: dto.notes,
+    };
+
+    if (existingLicenseId) {
+      const updated = await this.prisma.license.update({
+        where: { id: existingLicenseId },
+        data,
+      });
+      return updated.id;
+    }
+
+    const created = await this.prisma.license.create({ data });
+    return created.id;
+  }
+
   private async createRecord(
     dto: CreateConfigurationItemDto,
     manufacturerId: string | undefined,
     modelId: string | undefined,
     warrantyId: string | undefined,
+    licenseId: string | undefined,
   ) {
     try {
       return await this.prisma.configurationItem.create({
@@ -419,6 +495,7 @@ export class ConfigurationItemsService {
           manufacturerId,
           modelId,
           warrantyId,
+          licenseId,
         },
         include: CI_INCLUDE,
       });
@@ -441,6 +518,7 @@ export class ConfigurationItemsService {
     manufacturerId: string | undefined,
     modelId: string | undefined,
     warrantyId: string | null | undefined,
+    licenseId: string | null | undefined,
   ) {
     try {
       return await this.prisma.configurationItem.update({
@@ -455,6 +533,7 @@ export class ConfigurationItemsService {
           manufacturerId,
           modelId,
           warrantyId,
+          licenseId,
         },
         include: CI_INCLUDE,
       });
@@ -479,12 +558,16 @@ export class ConfigurationItemsService {
     const warrantyId = dto.warranty
       ? await this.upsertWarranty(null, dto.warranty)
       : undefined;
+    const licenseId = dto.license
+      ? await this.upsertLicense(null, dto.license)
+      : undefined;
 
     const ci = await this.createRecord(
       dto,
       manufacturerId,
       modelId,
       warrantyId,
+      licenseId,
     );
 
     await this.auditLogService.record({
@@ -514,6 +597,14 @@ export class ConfigurationItemsService {
       warrantyId = null;
     }
 
+    let licenseId: string | null | undefined = before.licenseId;
+    if (dto.license) {
+      licenseId = await this.upsertLicense(before.licenseId, dto.license);
+    } else if (dto.clearLicense && before.licenseId) {
+      await this.prisma.license.delete({ where: { id: before.licenseId } });
+      licenseId = null;
+    }
+
     const { manufacturerId, modelId } = await this.resolveManufacturerAndModel(
       dto,
       before.manufacturerId,
@@ -525,6 +616,7 @@ export class ConfigurationItemsService {
       manufacturerId,
       modelId,
       warrantyId,
+      licenseId,
     );
 
     await this.auditLogService.record({

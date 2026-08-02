@@ -12,4 +12,12 @@ export class UpdateConfigurationItemDto extends PartialType(
   @IsOptional()
   @IsBoolean()
   clearWarranty?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Retire la licence enregistrée pour ce CI (ignoré si `license` est aussi fourni)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  clearLicense?: boolean;
 }

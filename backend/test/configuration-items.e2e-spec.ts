@@ -29,6 +29,7 @@ describe('ConfigurationItems (e2e)', () => {
   let manufacturerId: string;
   let warrantyCiId: string;
   const reliabilityCiIds: string[] = [];
+  const licenseCiIds: string[] = [];
 
   let employeeToken: string;
   let supervisorToken: string;
@@ -121,14 +122,21 @@ describe('ConfigurationItems (e2e)', () => {
       await prisma.configurationItem.deleteMany({
         where: {
           id: {
-            in: [ciId, dependentCiId, warrantyCiId, ...reliabilityCiIds].filter(
-              Boolean,
-            ),
+            in: [
+              ciId,
+              dependentCiId,
+              warrantyCiId,
+              ...reliabilityCiIds,
+              ...licenseCiIds,
+            ].filter(Boolean),
           },
         },
       });
     await prisma.warranty.deleteMany({
       where: { provider: { startsWith: 'E2E CI' } },
+    });
+    await prisma.license.deleteMany({
+      where: { vendor: { startsWith: 'E2E CI' } },
     });
     await prisma.model.deleteMany({
       where: { manufacturer: { name: { startsWith: 'E2E CI' } } },
@@ -393,6 +401,101 @@ describe('ConfigurationItems (e2e)', () => {
       expect(entry.ciCount).toBe(3);
       expect(entry.recentTicketCount).toBe(3);
       expect(entry.atRisk).toBe(true);
+    });
+  });
+
+  // US-23 : consulter les licences et leur date d'expiration, pour
+  // anticiper les renouvellements.
+  describe('licenses', () => {
+    it('rejects license listing for an EMPLOYEE', async () => {
+      await request(app.getHttpServer())
+        .get('/configuration-items/licenses')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
+
+    it('lists licenses sorted by soonest expiration, with a computed status', async () => {
+      const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const valid = new Date(Date.now() + 400 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+
+      const ciSoon = await request(app.getHttpServer())
+        .post('/configuration-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          ciTypeId,
+          name: 'LIC-E2E-SOON',
+          inventoryNumber: 'INV-E2E-LIC-01',
+          license: { vendor: 'E2E CI Microsoft', expiresAt: soon },
+        })
+        .expect(201);
+      licenseCiIds.push(ciSoon.body.id);
+
+      const ciValid = await request(app.getHttpServer())
+        .post('/configuration-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          ciTypeId,
+          name: 'LIC-E2E-VALID',
+          inventoryNumber: 'INV-E2E-LIC-02',
+          license: { vendor: 'E2E CI Adobe', expiresAt: valid },
+        })
+        .expect(201);
+      licenseCiIds.push(ciValid.body.id);
+
+      const res = await request(app.getHttpServer())
+        .get('/configuration-items/licenses')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+
+      const soonIndex = res.body.findIndex(
+        (entry: any) => entry.ci.id === ciSoon.body.id,
+      );
+      const validIndex = res.body.findIndex(
+        (entry: any) => entry.ci.id === ciValid.body.id,
+      );
+      expect(soonIndex).toBeGreaterThanOrEqual(0);
+      expect(validIndex).toBeGreaterThan(soonIndex);
+      expect(res.body[soonIndex].status).toBe('EXPIRING_SOON');
+      expect(res.body[validIndex].status).toBe('VALID');
+    });
+
+    it('updates the existing license in place and clears it on clearLicense', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/configuration-items')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          ciTypeId,
+          name: 'LIC-E2E-EDIT',
+          inventoryNumber: 'INV-E2E-LIC-03',
+          license: {
+            vendor: 'E2E CI SAP',
+            expiresAt: '2027-01-15',
+          },
+        })
+        .expect(201);
+      licenseCiIds.push(created.body.id);
+      const licenseId = created.body.license.id;
+
+      const updated = await request(app.getHttpServer())
+        .patch(`/configuration-items/${created.body.id}`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({
+          license: { vendor: 'E2E CI SAP Enterprise', expiresAt: '2028-01-15' },
+        })
+        .expect(200);
+      expect(updated.body.license.id).toBe(licenseId);
+      expect(updated.body.license.vendor).toBe('E2E CI SAP Enterprise');
+
+      const cleared = await request(app.getHttpServer())
+        .patch(`/configuration-items/${created.body.id}`)
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .send({ clearLicense: true })
+        .expect(200);
+      expect(cleared.body.license).toBeNull();
     });
   });
 
