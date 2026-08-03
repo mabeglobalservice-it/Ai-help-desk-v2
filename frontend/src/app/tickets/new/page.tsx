@@ -6,10 +6,13 @@ import { useRouter } from "next/navigation";
 import {
   aiDiagnoseTicket,
   ApiError,
+  confirmAutoResolution,
   createTicket,
   getConfigurationItems,
   getPriorities,
   getTicketCategories,
+  proposeAutoResolution,
+  type AutoResolveProposal,
   type ConfigurationItem,
   type Priority,
   type TicketCategory,
@@ -53,6 +56,14 @@ export default function NewTicketPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiDegraded, setAiDegraded] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // docs/06-cas-utilisation.md UC-015 ("Résolution automatique")
+  const [autoResolveProposal, setAutoResolveProposal] = useState<AutoResolveProposal | null>(null);
+  const [isConfirmingAutoResolve, setIsConfirmingAutoResolve] = useState(false);
+  const [autoResolveError, setAutoResolveError] = useState<string | null>(null);
+  const [autoResolveOutcome, setAutoResolveOutcome] = useState<
+    { status: "RESOLVED" } | { status: "FAILED_FALLBACK"; ticketId: string } | null
+  >(null);
 
   useEffect(() => {
     const token = getToken();
@@ -114,18 +125,60 @@ export default function NewTicketPage() {
     setAiError(null);
     setAiDegraded(false);
     setIsAnalyzing(true);
+    setAutoResolveProposal(null);
+    setAutoResolveError(null);
+    setAutoResolveOutcome(null);
 
     try {
-      const diagnosis = await aiDiagnoseTicket(token, summary);
+      const [diagnosis, proposal] = await Promise.all([
+        aiDiagnoseTicket(token, summary),
+        proposeAutoResolution(token, summary).catch(() => ({ eligible: false as const })),
+      ]);
       setTitle(diagnosis.title);
       setCategoryId(diagnosis.categoryId);
       setPriorityId(diagnosis.priorityId);
       setAiDegraded(diagnosis.degraded);
+      setAutoResolveProposal(proposal);
     } catch (err) {
       setAiError(err instanceof ApiError ? err.message : "Impossible d'analyser la description pour le moment.");
     } finally {
       setIsAnalyzing(false);
     }
+  }
+
+  async function handleConfirmAutoResolve() {
+    if (!autoResolveProposal?.eligible) return;
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setAutoResolveError(null);
+    setIsConfirmingAutoResolve(true);
+    try {
+      const result = await confirmAutoResolution(token, {
+        description: summary,
+        scriptId: autoResolveProposal.scriptId,
+        confidence: autoResolveProposal.confidence,
+      });
+      setAutoResolveOutcome(
+        result.status === "RESOLVED"
+          ? { status: "RESOLVED" }
+          : { status: "FAILED_FALLBACK", ticketId: result.ticketId },
+      );
+      setAutoResolveProposal(null);
+    } catch (err) {
+      setAutoResolveError(
+        err instanceof ApiError ? err.message : "Impossible de confirmer la résolution automatique.",
+      );
+    } finally {
+      setIsConfirmingAutoResolve(false);
+    }
+  }
+
+  function handleDeclineAutoResolve() {
+    setAutoResolveProposal(null);
   }
 
   const backLink = (
@@ -150,11 +203,94 @@ export default function NewTicketPage() {
     );
   }
 
+  // docs/06-cas-utilisation.md UC-015 : cas nominal — problème résolu sans
+  // qu'aucun ticket n'ait été créé.
+  if (autoResolveOutcome?.status === "RESOLVED") {
+    return (
+      <div className="min-h-screen bg-background">
+        <AppHeader title="Nouveau ticket" action={backLink} />
+        <main className="mx-auto max-w-lg px-6 py-16">
+          <Alert>
+            <AlertDescription>
+              Problème résolu automatiquement — aucun ticket n&apos;a été nécessaire. Un article a
+              été proposé pour enrichir la base de connaissances.
+            </AlertDescription>
+          </Alert>
+        </main>
+      </div>
+    );
+  }
+
+  // docs/06-cas-utilisation.md UC-015, cas d'erreur : la résolution
+  // automatique a échoué, un ticket standard a été créé avec le contexte.
+  if (autoResolveOutcome?.status === "FAILED_FALLBACK") {
+    return (
+      <div className="min-h-screen bg-background">
+        <AppHeader title="Nouveau ticket" action={backLink} />
+        <main className="mx-auto max-w-lg px-6 py-16">
+          <Alert variant="destructive">
+            <AlertDescription>
+              La résolution automatique a échoué : un ticket a été créé avec le contexte de la
+              tentative.
+            </AlertDescription>
+          </Alert>
+          <Button
+            className="mt-4 w-full"
+            nativeButton={false}
+            render={<Link href={`/tickets/${autoResolveOutcome.ticketId}`} />}
+          >
+            Voir le ticket
+          </Button>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <AppHeader title="Nouveau ticket" action={backLink} />
 
       <main className="mx-auto max-w-lg px-6 py-8">
+        {autoResolveProposal?.eligible ? (
+          <Card className="mb-6 border-primary">
+            <CardHeader>
+              <CardTitle className="text-xl">Résolution automatique possible</CardTitle>
+              <CardDescription>
+                docs/06 UC-015 : l&apos;IA a identifié une solution non sensible avec{" "}
+                {Math.round(autoResolveProposal.confidence * 100)}% de confiance.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm">
+                <span className="font-medium">Action proposée :</span> {autoResolveProposal.scriptName}
+              </p>
+              <p className="text-sm text-muted-foreground">{autoResolveProposal.explanation}</p>
+              {autoResolveError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{autoResolveError}</AlertDescription>
+                </Alert>
+              ) : null}
+              <div className="flex gap-2">
+                <Button
+                  className="flex-1"
+                  disabled={isConfirmingAutoResolve}
+                  onClick={handleConfirmAutoResolve}
+                >
+                  {isConfirmingAutoResolve ? "Résolution en cours..." : "Confirmer la résolution automatique"}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  disabled={isConfirmingAutoResolve}
+                  onClick={handleDeclineAutoResolve}
+                >
+                  Non, créer un ticket
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
         <Card>
           <CardHeader>
             <CardTitle className="text-xl">Décrire le problème</CardTitle>

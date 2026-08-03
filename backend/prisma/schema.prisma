@@ -46,6 +46,7 @@ model User {
   aiFeedbackGiven           AiFeedback[]
   knowledgeDocumentsOwned   KnowledgeDocument[] @relation("KnowledgeDocumentOwner")
   knowledgeDocumentsUploaded KnowledgeDocument[] @relation("KnowledgeDocumentUploader")
+  autoResolutionsRequested  AutoResolution[]
 
   @@map("users")
 }
@@ -135,6 +136,7 @@ model Ticket {
   automationRuns    AutomationRun[]
   knowledgeArticles KnowledgeArticle[]
   aiConversations   AiConversation[]
+  autoResolutionFallback AutoResolution?
 
   @@index([status, priorityId, technicianId, categoryId])
   @@map("tickets")
@@ -417,7 +419,8 @@ model Script {
   isSensitive Boolean        @default(true) @map("is_sensitive")
   createdAt   DateTime       @default(now()) @map("created_at")
 
-  automationRuns AutomationRun[]
+  automationRuns  AutomationRun[]
+  autoResolutions AutoResolution[]
 
   @@map("scripts")
 }
@@ -496,8 +499,14 @@ enum ApprovalStatus {
 // solution incomplete ou erronee dans le systeme documentaire.
 model KnowledgeArticle {
   id           String                 @id @default(uuid())
-  ticketId     String                 @map("ticket_id")
-  ticket       Ticket                 @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // docs/06-cas-utilisation.md UC-015 : une resolution automatique (sans
+  // ticket) genere aussi une proposition d'article — ticketId est donc
+  // nullable, exactement un des deux (ticketId, autoResolutionId) est
+  // renseigne selon l'origine.
+  ticketId         String?          @map("ticket_id")
+  ticket           Ticket?          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  autoResolutionId String?          @unique @map("auto_resolution_id")
+  autoResolution   AutoResolution?  @relation(fields: [autoResolutionId], references: [id], onDelete: Cascade)
   title        String
   content      String
   status       KnowledgeArticleStatus @default(PROPOSED)
@@ -513,6 +522,37 @@ enum KnowledgeArticleStatus {
   PROPOSED
   APPROVED
   REJECTED
+}
+
+// docs/06-cas-utilisation.md UC-015 ("Résolution automatique"), RM-03 :
+// l'Agent IA résout un incident non sensible (confiance >= 95%, script non
+// sensible) sans jamais créer de ticket dans le cas nominal. scriptId
+// reste toujours valide (jamais supprimé) — la vérification RM-03 refaite
+// à la confirmation (script encore non sensible ?) est ce qui peut faire
+// basculer en FAILED_FALLBACK, avec un ticket standard créé pour porter le
+// contexte de la tentative (fallbackTicketId).
+model AutoResolution {
+  id              String               @id @default(uuid())
+  employeeId      String               @map("employee_id")
+  employee        User                 @relation(fields: [employeeId], references: [id])
+  description     String
+  scriptId        String               @map("script_id")
+  script          Script               @relation(fields: [scriptId], references: [id])
+  confidenceScore Decimal              @map("confidence_score") @db.Decimal(4, 3)
+  status          AutoResolutionStatus @default(RESOLVED)
+  outputLog       String?              @map("output_log")
+  fallbackTicketId String?             @unique @map("fallback_ticket_id")
+  fallbackTicket   Ticket?             @relation(fields: [fallbackTicketId], references: [id])
+  createdAt       DateTime             @default(now()) @map("created_at")
+
+  knowledgeArticle KnowledgeArticle?
+
+  @@map("auto_resolutions")
+}
+
+enum AutoResolutionStatus {
+  RESOLVED
+  FAILED_FALLBACK
 }
 
 // docs/11-documentation-api.md §6 (GET/PATCH /ai/agents), docs/08 §4.4 :

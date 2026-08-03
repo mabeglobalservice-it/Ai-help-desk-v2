@@ -9,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -18,6 +19,8 @@ import { AutomationService } from './automation.service';
 import { CreateScriptDto } from './dto/create-script.dto';
 import { CreateAutomationRunDto } from './dto/create-automation-run.dto';
 import { DecideApprovalDto } from './dto/decide-approval.dto';
+import { ProposeAutoResolutionDto } from './dto/propose-auto-resolution.dto';
+import { ConfirmAutoResolutionDto } from './dto/confirm-auto-resolution.dto';
 
 // docs/11-documentation-api.md §8 (Module Automation), docs/06-cas-
 // utilisation.md UC-014/UC-022, docs/09-architecture-agents-ia.md §3.5.
@@ -109,5 +112,37 @@ export class AutomationController {
   ) {
     const requester = req.user as { userId: string; role: Role };
     return this.automationService.decideApproval(id, dto, requester);
+  }
+
+  // docs/06-cas-utilisation.md UC-015 : même point d'entrée (description en
+  // langage naturel) et même limite de débit qu'un diagnostic standard
+  // (POST /tickets/ai-diagnose), puisque cette route déclenche aussi un
+  // appel réel à l'API Anthropic.
+  @ApiOperation({
+    summary: 'Évalue si un problème peut être résolu automatiquement (UC-015)',
+    description:
+      "Réservé au rôle EMPLOYEE. Propose une résolution automatique uniquement si un script non sensible correspond avec une confiance >= 95% (RM-03) — ne décide et n'exécute rien.",
+  })
+  @Roles(Role.EMPLOYEE)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('auto-resolve')
+  proposeAutoResolve(@Body() dto: ProposeAutoResolutionDto) {
+    return this.automationService.proposeAutoResolution(dto.description);
+  }
+
+  @ApiOperation({
+    summary: 'Confirme et exécute une résolution automatique proposée',
+    description:
+      "Réservé au rôle EMPLOYEE. Revérifie que le script est toujours non sensible (RM-03) ; en cas d'échec, crée un ticket standard avec le contexte de la tentative.",
+  })
+  @Roles(Role.EMPLOYEE)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('auto-resolve/confirm')
+  confirmAutoResolve(
+    @Body() dto: ConfirmAutoResolutionDto,
+    @Req() req: Request,
+  ) {
+    const requester = req.user as { userId: string };
+    return this.automationService.confirmAutoResolution(dto, requester.userId);
   }
 }

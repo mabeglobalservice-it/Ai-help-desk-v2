@@ -242,7 +242,7 @@ export class KnowledgeService {
           sourceType: 'ARTICLE',
           title: article.title,
           summary: article.content,
-          reference: article.ticket.reference,
+          reference: article.ticket?.reference ?? null,
           resolvedAt: null,
           categoryName: null,
           priorityName: null,
@@ -497,6 +497,33 @@ export class KnowledgeService {
     return this.prisma.knowledgeArticle.create({
       data: {
         ticketId: ticket.id,
+        title: draft.title,
+        content: draft.content,
+      },
+    });
+  }
+
+  // docs/06-cas-utilisation.md UC-015 étape 8 : une résolution automatique
+  // (sans ticket) génère aussi une proposition d'article — même circuit de
+  // validation humaine que proposeArticleFromTicket (doc 10 §11, "jamais
+  // sans validation humaine"), juste rattachée à autoResolutionId au lieu
+  // de ticketId. Appelé en interne par AutomationService, jamais exposé
+  // directement.
+  async proposeArticleFromAutoResolution(
+    autoResolutionId: string,
+    description: string,
+    outputLog: string,
+  ) {
+    const draft = await this.aiService.summarizeTicketForKnowledgeArticle({
+      title: description.slice(0, 80),
+      summary: description,
+      resolutionNote: outputLog,
+      categoryName: 'Automatisation',
+    });
+
+    return this.prisma.knowledgeArticle.create({
+      data: {
+        autoResolutionId,
         title: draft.title,
         content: draft.content,
       },

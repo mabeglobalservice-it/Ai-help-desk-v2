@@ -98,6 +98,32 @@ export interface AutomationSuggestion {
 
 const NO_SUGGESTION = 'aucun';
 
+// docs/06-cas-utilisation.md UC-015, RM-03 : une résolution automatique
+// n'est jamais proposée sous 95% de confiance, ni pour une action touchant
+// un compte/une permission/une identité — seulement des scripts déjà
+// catalogués comme non sensibles (scripts.is_sensitive = false, jamais
+// décidé par le LLM lui-même).
+const AUTO_RESOLUTION_SYSTEM_PROMPT =
+  "Tu es l'Agent IA d'un service d'assistance informatique interne, chargé d'identifier si un " +
+  'problème peut être résolu automatiquement sans intervention humaine (UC-015). Tu ne dois ' +
+  "proposer une résolution automatique QUE si le problème correspond clairement à l'un des " +
+  "scripts non sensibles fournis, avec un niveau de confiance d'au moins 0.95. En cas de doute, " +
+  "d'ambiguïté, ou si le problème pourrait toucher un compte, une permission ou une identité, " +
+  'réponds eligible=false — le diagnostic conversationnel standard prendra le relais.';
+
+interface AutoResolutionEvaluation {
+  eligible: boolean;
+  scriptId?: string;
+  confidence?: number;
+  explanation?: string;
+}
+
+export interface AutoResolutionSuggestion {
+  scriptId: string;
+  confidence: number;
+  explanation: string;
+}
+
 interface DiagnosisResult {
   title: string;
   categoryId: string;
@@ -790,6 +816,129 @@ export class AiService {
       scriptId: best.id,
       justification: ticket.summary?.trim() || ticket.title,
       degraded: true,
+    };
+  }
+
+  // docs/06-cas-utilisation.md UC-015, RM-03 : contrairement aux autres
+  // agents, il n'y a PAS de repli en mode dégradé ici — un heuristique local
+  // par mots-clés ne peut jamais affirmer de façon fiable un niveau de
+  // confiance de 95%, et prétendre le contraire serait dangereux (RM-03
+  // exige une confiance réelle avant toute action non supervisée). Si l'IA
+  // est indisponible, désactivée, ou échoue, la résolution automatique
+  // n'est simplement jamais proposée — le diagnostic conversationnel
+  // standard (RM-05) prend le relais normalement.
+  async attemptAutoResolution(
+    description: string,
+    nonSensitiveScripts: ScriptOption[],
+  ): Promise<AutoResolutionSuggestion | null> {
+    if (nonSensitiveScripts.length === 0) return null;
+
+    if (
+      !this.client ||
+      !(await this.checkAgentStatus(AiAgentName.AUTOMATION)).enabled
+    ) {
+      this.logger.warn(
+        'Agent Automation indisponible : aucune résolution automatique proposée (UC-015 ne se dégrade jamais, RM-03)',
+      );
+      return null;
+    }
+
+    try {
+      return await this.aiAttemptAutoResolution(
+        this.client,
+        description,
+        nonSensitiveScripts,
+      );
+    } catch (error) {
+      this.logger.error(
+        "Échec de l'évaluation de résolution automatique, aucune proposition (UC-015)",
+        error,
+      );
+      return null;
+    }
+  }
+
+  private async aiAttemptAutoResolution(
+    client: Anthropic,
+    description: string,
+    nonSensitiveScripts: ScriptOption[],
+  ): Promise<AutoResolutionSuggestion | null> {
+    const scriptList = nonSensitiveScripts
+      .map((script) => `- ${script.id}: ${script.name} — ${script.content}`)
+      .join('\n');
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 512,
+      system: AUTO_RESOLUTION_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `Description du problème :\n"""\n${description}\n"""\n\n` +
+            `Scripts non sensibles disponibles :\n${scriptList}`,
+        },
+      ],
+      tools: [
+        {
+          name: 'evaluate_auto_resolution',
+          description:
+            'Évalue si ce problème peut être résolu automatiquement par un script non sensible',
+          input_schema: {
+            type: 'object',
+            properties: {
+              eligible: {
+                type: 'boolean',
+                description:
+                  'true seulement si un script correspond clairement avec une confiance >= 0.95',
+              },
+              scriptId: {
+                type: 'string',
+                enum: nonSensitiveScripts.map((script) => script.id),
+                description: 'Requis si eligible=true',
+              },
+              confidence: {
+                type: 'number',
+                description: 'Niveau de confiance entre 0 et 1',
+              },
+              explanation: {
+                type: 'string',
+                description:
+                  "Explication courte et factuelle de l'action qui serait prise",
+              },
+            },
+            required: ['eligible'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'evaluate_auto_resolution' },
+    });
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+    );
+
+    if (!toolUse) {
+      throw new Error(
+        "Réponse de l'IA inattendue : aucune évaluation structurée reçue",
+      );
+    }
+
+    const evaluation = toolUse.input as AutoResolutionEvaluation;
+
+    if (
+      !evaluation.eligible ||
+      !evaluation.scriptId ||
+      (evaluation.confidence ?? 0) < 0.95 ||
+      !nonSensitiveScripts.some((script) => script.id === evaluation.scriptId)
+    ) {
+      return null;
+    }
+
+    return {
+      scriptId: evaluation.scriptId,
+      confidence: evaluation.confidence ?? 0.95,
+      explanation: evaluation.explanation?.trim() || '',
     };
   }
 }

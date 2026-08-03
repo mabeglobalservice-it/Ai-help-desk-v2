@@ -369,6 +369,41 @@ describe('KnowledgeService', () => {
     });
   });
 
+  // docs/06-cas-utilisation.md UC-015 étape 8 : même circuit de validation
+  // qu'un article issu d'un ticket, mais sans ticketId.
+  describe('proposeArticleFromAutoResolution', () => {
+    it('generates a draft via AiService and creates a PROPOSED article tied to autoResolutionId', async () => {
+      aiService.summarizeTicketForKnowledgeArticle.mockResolvedValue({
+        title: 'Imprimante bloquée — résolution automatique',
+        content: 'Cause probable...\nSolution appliquée...',
+        degraded: false,
+      });
+      prisma.knowledgeArticle.create.mockResolvedValue({ id: 'article-2' });
+
+      const result = await service.proposeArticleFromAutoResolution(
+        'autores-1',
+        'Imprimante bloquée',
+        'Résolution automatique : script exécuté avec succès.',
+      );
+
+      expect(aiService.summarizeTicketForKnowledgeArticle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          summary: 'Imprimante bloquée',
+          categoryName: 'Automatisation',
+        }),
+      );
+      expect(prisma.knowledgeArticle.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            autoResolutionId: 'autores-1',
+            title: 'Imprimante bloquée — résolution automatique',
+          }),
+        }),
+      );
+      expect(result).toEqual({ id: 'article-2' });
+    });
+  });
+
   describe('decideArticle', () => {
     it('rejects a decision value other than APPROVED/REJECTED', async () => {
       await expect(

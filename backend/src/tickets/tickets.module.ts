@@ -10,5 +10,6 @@ import { TicketsService } from './tickets.service';
   imports: [NotificationsModule, AiModule, RealtimeModule, KnowledgeModule],
   controllers: [TicketsController],
   providers: [TicketsService],
+  exports: [TicketsService],
 })
 export class TicketsModule {}

@@ -130,7 +130,9 @@ export default function KnowledgeArticlesPage() {
                   <li key={article.id} className="rounded-md border border-border p-4">
                     <p className="font-medium">{article.title}</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Ticket source : {article.ticket.reference} — {article.ticket.title}
+                      {article.ticket
+                        ? `Ticket source : ${article.ticket.reference} — ${article.ticket.title}`
+                        : "Source : résolution automatique (UC-015, sans ticket)"}
                     </p>
                     <p className="mt-2 text-sm whitespace-pre-wrap">{article.content}</p>
                     <div className="mt-3 flex gap-2">

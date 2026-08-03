@@ -588,7 +588,9 @@ export interface KnowledgeArticle {
   status: KnowledgeArticleStatus;
   createdAt: string;
   decidedAt: string | null;
-  ticket: { id: string; reference: string; title: string };
+  // docs/06-cas-utilisation.md UC-015 : un article peut aussi provenir d'une
+  // résolution automatique (pas de ticket) — ticket est alors null.
+  ticket: { id: string; reference: string; title: string } | null;
   approvedBy: { id: string; displayName: string; email: string } | null;
 }
 
@@ -767,6 +769,43 @@ export function aiDiagnoseTicket(token: string, description: string): Promise<Ti
   return apiFetch<TicketDiagnosis>("/tickets/ai-diagnose", token, {
     method: "POST",
     body: JSON.stringify({ description }),
+  });
+}
+
+// docs/06-cas-utilisation.md UC-015 ("Résolution automatique"), RM-03 : ne
+// propose une résolution automatique que pour un script non sensible avec
+// une confiance >= 95% — jamais en mode dégradé.
+export type AutoResolveProposal =
+  | { eligible: false }
+  | {
+      eligible: true;
+      scriptId: string;
+      scriptName: string;
+      confidence: number;
+      explanation: string;
+    };
+
+export function proposeAutoResolution(
+  token: string,
+  description: string,
+): Promise<AutoResolveProposal> {
+  return apiFetch<AutoResolveProposal>("/automation/auto-resolve", token, {
+    method: "POST",
+    body: JSON.stringify({ description }),
+  });
+}
+
+export type AutoResolveConfirmResult =
+  | { status: "RESOLVED"; outputLog: string; autoResolutionId: string }
+  | { status: "FAILED_FALLBACK"; ticketId: string; autoResolutionId: string };
+
+export function confirmAutoResolution(
+  token: string,
+  input: { description: string; scriptId: string; confidence: number },
+): Promise<AutoResolveConfirmResult> {
+  return apiFetch<AutoResolveConfirmResult>("/automation/auto-resolve/confirm", token, {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

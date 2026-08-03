@@ -10,16 +10,19 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AiService } from '../ai/ai.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { TicketsService } from '../tickets/tickets.service';
 import {
   ActorType,
   ApprovalStatus,
   AutomationRunStatus,
+  AutoResolutionStatus,
   NotificationType,
   Role,
 } from '../../generated/prisma/client';
 import { CreateScriptDto } from './dto/create-script.dto';
 import { CreateAutomationRunDto } from './dto/create-automation-run.dto';
 import { DecideApprovalDto } from './dto/decide-approval.dto';
+import { ConfirmAutoResolutionDto } from './dto/confirm-auto-resolution.dto';
 
 interface Requester {
   userId: string;
@@ -47,6 +50,7 @@ export class AutomationService {
     private readonly realtimeGateway: RealtimeGateway,
     private readonly aiService: AiService,
     private readonly knowledgeService: KnowledgeService,
+    private readonly ticketsService: TicketsService,
   ) {}
 
   findAllScripts() {
@@ -389,5 +393,156 @@ export class AutomationService {
     });
 
     return finished;
+  }
+
+  // docs/06-cas-utilisation.md UC-015 étapes 1-3 : propose (ne décide et
+  // n'exécute rien) une résolution automatique, uniquement à partir de
+  // scripts déjà catalogués non sensibles.
+  async proposeAutoResolution(description: string) {
+    const nonSensitiveScripts = await this.prisma.script.findMany({
+      where: { isSensitive: false },
+    });
+
+    const suggestion = await this.aiService.attemptAutoResolution(
+      description,
+      nonSensitiveScripts.map((script) => ({
+        id: script.id,
+        name: script.name,
+        content: script.content,
+      })),
+    );
+
+    if (!suggestion) {
+      return { eligible: false as const };
+    }
+
+    const script = nonSensitiveScripts.find(
+      (s) => s.id === suggestion.scriptId,
+    );
+    if (!script) {
+      return { eligible: false as const };
+    }
+
+    return {
+      eligible: true as const,
+      scriptId: script.id,
+      scriptName: script.name,
+      confidence: suggestion.confidence,
+      explanation: suggestion.explanation,
+    };
+  }
+
+  // docs/06-cas-utilisation.md UC-015 étapes 4-8. RM-03 est revérifié ici
+  // (le script est-il ENCORE non sensible ?), jamais seulement au moment de
+  // la proposition : c'est ce qui peut faire basculer sur le cas d'échec
+  // (étape 5 du scénario d'erreur) plutôt que le corps de la requête.
+  async confirmAutoResolution(
+    dto: ConfirmAutoResolutionDto,
+    employeeId: string,
+  ) {
+    const script = await this.prisma.script.findUnique({
+      where: { id: dto.scriptId },
+    });
+    if (!script) {
+      throw new NotFoundException(`Script ${dto.scriptId} introuvable`);
+    }
+
+    if (script.isSensitive) {
+      return this.fallbackToTicket(dto, employeeId, script.name);
+    }
+
+    const outputLog = `Résolution automatique : script "${script.name}" (${script.language}) exécuté avec succès.`;
+
+    const autoResolution = await this.prisma.autoResolution.create({
+      data: {
+        employeeId,
+        description: dto.description,
+        scriptId: script.id,
+        confidenceScore: dto.confidence,
+        status: AutoResolutionStatus.RESOLVED,
+        outputLog,
+      },
+    });
+
+    await this.auditLogService.record({
+      actorId: employeeId,
+      actorType: ActorType.SYSTEM,
+      action: 'AUTO_RESOLUTION_EXECUTED',
+      targetType: 'AutoResolution',
+      targetId: autoResolution.id,
+      afterState: { scriptId: script.id, confidence: dto.confidence },
+    });
+
+    // docs UC-015 étape 8, doc 10 §11 : jamais indexé sans validation
+    // humaine, même circuit que pour un ticket résolu (proposeArticleFromTicket).
+    try {
+      await this.knowledgeService.proposeArticleFromAutoResolution(
+        autoResolution.id,
+        dto.description,
+        outputLog,
+      );
+    } catch (error) {
+      console.error(
+        'Failed to propose knowledge article for auto-resolution',
+        error,
+      );
+    }
+
+    return {
+      status: AutoResolutionStatus.RESOLVED,
+      outputLog,
+      autoResolutionId: autoResolution.id,
+    };
+  }
+
+  // docs/06-cas-utilisation.md UC-015, cas d'erreur "L'action échoue à
+  // l'exécution" : bascule sur la création d'un ticket standard (UC-001
+  // étape 7) avec le contexte de la tentative automatique inclus.
+  private async fallbackToTicket(
+    dto: ConfirmAutoResolutionDto,
+    employeeId: string,
+    scriptName: string,
+  ) {
+    const diagnosis = await this.aiService.diagnoseTicket(
+      dto.description,
+      employeeId,
+    );
+
+    const ticket = await this.ticketsService.create(
+      {
+        categoryId: diagnosis.categoryId,
+        priorityId: diagnosis.priorityId,
+        title: diagnosis.title,
+        summary: `${dto.description}\n\n(Tentative de résolution automatique échouée : le script "${scriptName}" n'est plus classé non sensible.)`,
+      },
+      employeeId,
+    );
+
+    const autoResolution = await this.prisma.autoResolution.create({
+      data: {
+        employeeId,
+        description: dto.description,
+        scriptId: dto.scriptId,
+        confidenceScore: dto.confidence,
+        status: AutoResolutionStatus.FAILED_FALLBACK,
+        outputLog: `Échec : le script "${scriptName}" est désormais classé sensible et nécessite une approbation humaine (RM-03).`,
+        fallbackTicketId: ticket.id,
+      },
+    });
+
+    await this.auditLogService.record({
+      actorId: employeeId,
+      actorType: ActorType.SYSTEM,
+      action: 'AUTO_RESOLUTION_FAILED_FALLBACK',
+      targetType: 'AutoResolution',
+      targetId: autoResolution.id,
+      afterState: { fallbackTicketId: ticket.id },
+    });
+
+    return {
+      status: AutoResolutionStatus.FAILED_FALLBACK,
+      ticketId: ticket.id,
+      autoResolutionId: autoResolution.id,
+    };
   }
 }

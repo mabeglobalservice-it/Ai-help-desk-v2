@@ -230,4 +230,52 @@ describe('AiService', () => {
       expect(result).toBeNull();
     });
   });
+
+  // docs/06-cas-utilisation.md UC-015, RM-03 : contrairement aux autres
+  // agents, il n'y a jamais de mode dégradé actif ici — un heuristique
+  // local ne peut pas affirmer une confiance >= 95% de façon fiable.
+  describe('attemptAutoResolution', () => {
+    const nonSensitiveScripts = [
+      {
+        id: 'script-cache',
+        name: 'Vider le cache imprimante',
+        content: 'Clear-PrintSpooler',
+      },
+    ];
+
+    it('returns null immediately when no non-sensitive scripts are available', async () => {
+      const result = await service.attemptAutoResolution(
+        'Imprimante bloquée',
+        [],
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it('never proposes a resolution when no API key is configured (no degraded mode for UC-015)', async () => {
+      const result = await service.attemptAutoResolution(
+        'Imprimante bloquée, redémarrage du spouleur nécessaire',
+        nonSensitiveScripts,
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it('never proposes a resolution when the Automation agent is disabled, even with an API key configured', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+      prisma.aiAgent.findUnique.mockResolvedValue({ isActive: false });
+      prisma.aiProviderConfig.findUnique.mockResolvedValue({ isActive: true });
+      service = await buildService();
+
+      const result = await service.attemptAutoResolution(
+        'Imprimante bloquée',
+        nonSensitiveScripts,
+      );
+
+      expect(result).toBeNull();
+      expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
+        where: { name: 'AUTOMATION' },
+      });
+    });
+  });
 });

@@ -11,9 +11,11 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AiService } from '../ai/ai.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { TicketsService } from '../tickets/tickets.service';
 import {
   ApprovalStatus,
   AutomationRunStatus,
+  AutoResolutionStatus,
   Role,
 } from '../../generated/prisma/client';
 
@@ -35,12 +37,21 @@ describe('AutomationService', () => {
       findMany: jest.Mock;
     };
     user: { findMany: jest.Mock; findUnique: jest.Mock };
+    autoResolution: { create: jest.Mock };
   };
   let notificationsService: { create: jest.Mock };
   let auditLogService: { record: jest.Mock };
   let realtimeGateway: { emitToUser: jest.Mock };
-  let aiService: { suggestAutomationForTicket: jest.Mock };
-  let knowledgeService: { indexScript: jest.Mock };
+  let aiService: {
+    suggestAutomationForTicket: jest.Mock;
+    attemptAutoResolution: jest.Mock;
+    diagnoseTicket: jest.Mock;
+  };
+  let knowledgeService: {
+    indexScript: jest.Mock;
+    proposeArticleFromAutoResolution: jest.Mock;
+  };
+  let ticketsService: { create: jest.Mock };
 
   const nonSensitiveScript = {
     id: 'script-1',
@@ -81,12 +92,21 @@ describe('AutomationService', () => {
         findMany: jest.fn(),
       },
       user: { findMany: jest.fn(), findUnique: jest.fn() },
+      autoResolution: { create: jest.fn() },
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     auditLogService = { record: jest.fn().mockResolvedValue(undefined) };
     realtimeGateway = { emitToUser: jest.fn() };
-    aiService = { suggestAutomationForTicket: jest.fn() };
-    knowledgeService = { indexScript: jest.fn().mockResolvedValue(undefined) };
+    aiService = {
+      suggestAutomationForTicket: jest.fn(),
+      attemptAutoResolution: jest.fn(),
+      diagnoseTicket: jest.fn(),
+    };
+    knowledgeService = {
+      indexScript: jest.fn().mockResolvedValue(undefined),
+      proposeArticleFromAutoResolution: jest.fn().mockResolvedValue(undefined),
+    };
+    ticketsService = { create: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -97,6 +117,7 @@ describe('AutomationService', () => {
         { provide: RealtimeGateway, useValue: realtimeGateway },
         { provide: AiService, useValue: aiService },
         { provide: KnowledgeService, useValue: knowledgeService },
+        { provide: TicketsService, useValue: ticketsService },
       ],
     }).compile();
 
@@ -456,6 +477,131 @@ describe('AutomationService', () => {
           reason: 'Cible incorrecte',
         }),
       );
+    });
+  });
+
+  // docs/06-cas-utilisation.md UC-015 ("Résolution automatique"), RM-03.
+  describe('proposeAutoResolution', () => {
+    it('returns eligible=false when AiService finds no confident match', async () => {
+      prisma.script.findMany.mockResolvedValue([nonSensitiveScript]);
+      aiService.attemptAutoResolution.mockResolvedValue(null);
+
+      const result = await service.proposeAutoResolution('Imprimante bloquée');
+
+      expect(aiService.attemptAutoResolution).toHaveBeenCalledWith(
+        'Imprimante bloquée',
+        [expect.objectContaining({ id: nonSensitiveScript.id })],
+      );
+      expect(result).toEqual({ eligible: false });
+    });
+
+    it('returns the proposal when AiService is confident (>= 95%)', async () => {
+      prisma.script.findMany.mockResolvedValue([nonSensitiveScript]);
+      aiService.attemptAutoResolution.mockResolvedValue({
+        scriptId: nonSensitiveScript.id,
+        confidence: 0.97,
+        explanation: 'Vidage de cache standard',
+      });
+
+      const result = await service.proposeAutoResolution('Imprimante bloquée');
+
+      expect(result).toEqual({
+        eligible: true,
+        scriptId: nonSensitiveScript.id,
+        scriptName: nonSensitiveScript.name,
+        confidence: 0.97,
+        explanation: 'Vidage de cache standard',
+      });
+    });
+  });
+
+  describe('confirmAutoResolution', () => {
+    const confirmDto = {
+      description: 'Imprimante bloquée',
+      scriptId: nonSensitiveScript.id,
+      confidence: 0.97,
+    };
+
+    it('throws NotFoundException when the script no longer exists', async () => {
+      prisma.script.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.confirmAutoResolution(confirmDto, 'emp-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('executes the script, records a RESOLVED AutoResolution, and proposes a KB article — no ticket created', async () => {
+      prisma.script.findUnique.mockResolvedValue(nonSensitiveScript);
+      prisma.autoResolution.create.mockResolvedValue({ id: 'autores-1' });
+
+      const result = await service.confirmAutoResolution(confirmDto, 'emp-1');
+
+      expect(prisma.autoResolution.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            employeeId: 'emp-1',
+            scriptId: nonSensitiveScript.id,
+            status: AutoResolutionStatus.RESOLVED,
+          }),
+        }),
+      );
+      expect(
+        knowledgeService.proposeArticleFromAutoResolution,
+      ).toHaveBeenCalledWith(
+        'autores-1',
+        confirmDto.description,
+        expect.any(String),
+      );
+      expect(ticketsService.create).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        status: AutoResolutionStatus.RESOLVED,
+        outputLog: expect.any(String),
+        autoResolutionId: 'autores-1',
+      });
+    });
+
+    // docs/06-cas-utilisation.md UC-015, RM-03 revérifié à la confirmation :
+    // le script proposé n'est plus non sensible depuis la proposition ->
+    // repli sur un ticket standard avec le contexte de la tentative.
+    it('falls back to creating a standard ticket when the script has since become sensitive', async () => {
+      prisma.script.findUnique.mockResolvedValue({
+        ...nonSensitiveScript,
+        isSensitive: true,
+      });
+      aiService.diagnoseTicket.mockResolvedValue({
+        title: 'Imprimante bloquée',
+        categoryId: 'cat-1',
+        priorityId: 'prio-1',
+        categoryName: 'Matériel',
+        priorityName: 'Moyenne',
+        degraded: false,
+        conversationId: 'conv-1',
+      });
+      ticketsService.create.mockResolvedValue({ id: 'ticket-1' });
+      prisma.autoResolution.create.mockResolvedValue({ id: 'autores-2' });
+
+      const result = await service.confirmAutoResolution(confirmDto, 'emp-1');
+
+      expect(ticketsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ categoryId: 'cat-1', priorityId: 'prio-1' }),
+        'emp-1',
+      );
+      expect(prisma.autoResolution.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: AutoResolutionStatus.FAILED_FALLBACK,
+            fallbackTicketId: 'ticket-1',
+          }),
+        }),
+      );
+      expect(
+        knowledgeService.proposeArticleFromAutoResolution,
+      ).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        status: AutoResolutionStatus.FAILED_FALLBACK,
+        ticketId: 'ticket-1',
+        autoResolutionId: 'autores-2',
+      });
     });
   });
 });

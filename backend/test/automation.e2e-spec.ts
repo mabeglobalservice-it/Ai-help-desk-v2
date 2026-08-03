@@ -9,6 +9,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import {
   ApprovalStatus,
   AutomationRunStatus,
+  AutoResolutionStatus,
   Role,
   ScriptLanguage,
   TicketStatus,
@@ -27,22 +28,27 @@ describe('Automation (e2e)', () => {
   const habiliteEmail = 'e2e-automation-habilite@test.com';
   const plainTechEmail = 'e2e-automation-plain-tech@test.com';
   const adminEmail = 'e2e-automation-admin@test.com';
+  const employeeEmail = 'e2e-automation-employee@test.com';
   const password = 'CorrectHorseBattery1!';
 
   let requesterId: string;
   let habiliteId: string;
+  let employeeId: string;
 
   let requesterToken: string;
   let habiliteToken: string;
   let plainTechToken: string;
   let adminToken: string;
+  let employeeToken: string;
 
   let nonSensitiveScriptId: string;
   let sensitiveScriptId: string;
+  let autoResolveScriptId: string;
   let categoryId: string;
   let priorityId: string;
   let accountTicketId: string;
   let unrelatedTicketId: string;
+  let autoResolveFallbackTicketId: string | undefined;
 
   async function loginAs(email: string): Promise<string> {
     const res = await request(app.getHttpServer())
@@ -66,7 +72,7 @@ describe('Automation (e2e)', () => {
     prisma = app.get(PrismaService);
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const [requester, habilite] = await Promise.all([
+    const [requester, habilite, , , employee] = await Promise.all([
       prisma.user.create({
         data: {
           email: requesterEmail,
@@ -104,7 +110,17 @@ describe('Automation (e2e)', () => {
           isActive: true,
         },
       }),
+      prisma.user.create({
+        data: {
+          email: employeeEmail,
+          passwordHash,
+          displayName: 'E2E Automation Employee',
+          role: Role.EMPLOYEE,
+          isActive: true,
+        },
+      }),
     ]);
+    employeeId = employee.id;
 
     requesterId = requester.id;
     habiliteId = habilite.id;
@@ -152,12 +168,27 @@ describe('Automation (e2e)', () => {
     accountTicketId = accountTicket.id;
     unrelatedTicketId = unrelatedTicket.id;
 
-    [requesterToken, habiliteToken, plainTechToken, adminToken] =
+    // docs/06-cas-utilisation.md UC-015 : script non sensible dédié, avec un
+    // nom/contenu volontairement sans ambiguïté pour que l'évaluation IA
+    // réelle (confiance >= 95%) soit fiable en test.
+    const autoResolveScript = await prisma.script.create({
+      data: {
+        name: "Vider le cache du spouleur d'impression",
+        language: ScriptLanguage.POWERSHELL,
+        content:
+          'Stop-Service Spooler; Remove-Item "$env:SystemRoot\\System32\\spool\\PRINTERS\\*" -Force; Start-Service Spooler',
+        isSensitive: false,
+      },
+    });
+    autoResolveScriptId = autoResolveScript.id;
+
+    [requesterToken, habiliteToken, plainTechToken, adminToken, employeeToken] =
       await Promise.all([
         loginAs(requesterEmail),
         loginAs(habiliteEmail),
         loginAs(plainTechEmail),
         loginAs(adminEmail),
+        loginAs(employeeEmail),
       ]);
   });
 
@@ -168,21 +199,37 @@ describe('Automation (e2e)', () => {
     await prisma.automationRun.deleteMany({
       where: { requestedById: requesterId },
     });
+    await prisma.knowledgeArticle.deleteMany({
+      where: { autoResolution: { employeeId } },
+    });
+    await prisma.autoResolution.deleteMany({ where: { employeeId } });
+    if (autoResolveFallbackTicketId) {
+      await prisma.ticket.deleteMany({
+        where: { id: autoResolveFallbackTicketId },
+      });
+    }
     if (nonSensitiveScriptId)
       await prisma.script.deleteMany({ where: { id: nonSensitiveScriptId } });
     if (sensitiveScriptId)
       await prisma.script.deleteMany({ where: { id: sensitiveScriptId } });
+    await prisma.script.deleteMany({ where: { id: autoResolveScriptId } });
     await prisma.ticket.deleteMany({
       where: { id: { in: [accountTicketId, unrelatedTicketId] } },
     });
     await prisma.ticketCategory.delete({ where: { id: categoryId } });
     await prisma.priority.delete({ where: { id: priorityId } });
 
+    // La confirmation d'une résolution automatique échouée (repli) appelle
+    // aiService.diagnoseTicket, qui persiste une AiConversation (FK
+    // RESTRICT sur user_id) — à retirer avant de supprimer l'employé.
+    await prisma.aiConversation.deleteMany({ where: { userId: employeeId } });
+
     const userEmails = [
       requesterEmail,
       habiliteEmail,
       plainTechEmail,
       adminEmail,
+      employeeEmail,
     ];
     await prisma.refreshToken.deleteMany({
       where: { user: { email: { in: userEmails } } },
@@ -375,5 +422,139 @@ describe('Automation (e2e)', () => {
 
     expect(res.body.status).toBe(AutomationRunStatus.REJECTED);
     expect(res.body.executedById).toBeNull();
+  });
+
+  // docs/06-cas-utilisation.md UC-015 ("Résolution automatique"), RM-03.
+  // Timeout raised: hits the real Anthropic API.
+  describe('auto-resolve (UC-015)', () => {
+    it('rejects a non-EMPLOYEE on both routes', async () => {
+      await request(app.getHttpServer())
+        .post('/automation/auto-resolve')
+        .set('Authorization', `Bearer ${requesterToken}`)
+        .send({ description: 'Le cache du spouleur est plein.' })
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .post('/automation/auto-resolve/confirm')
+        .set('Authorization', `Bearer ${requesterToken}`)
+        .send({
+          description: 'Le cache du spouleur est plein.',
+          scriptId: autoResolveScriptId,
+          confidence: 0.97,
+        })
+        .expect(403);
+    });
+
+    it('proposes eligible=false for a problem that matches no non-sensitive script', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/automation/auto-resolve')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          description:
+            "J'ai une question générale sur la politique de télétravail de l'entreprise.",
+        })
+        .expect(201);
+
+      expect(res.body.eligible).toBe(false);
+    }, 30000);
+
+    it('proposes an eligible auto-resolution for a clear, unambiguous match, then executes it on confirm (no ticket created)', async () => {
+      const proposal = await request(app.getHttpServer())
+        .post('/automation/auto-resolve')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          description:
+            "Le cache du spouleur d'impression est plein et bloque toutes les impressions, il faut le vider.",
+        })
+        .expect(201);
+
+      expect(proposal.body.eligible).toBe(true);
+      expect(proposal.body.scriptId).toBe(autoResolveScriptId);
+      expect(proposal.body.confidence).toBeGreaterThanOrEqual(0.95);
+
+      const confirmed = await request(app.getHttpServer())
+        .post('/automation/auto-resolve/confirm')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          description:
+            "Le cache du spouleur d'impression est plein et bloque toutes les impressions, il faut le vider.",
+          scriptId: proposal.body.scriptId,
+          confidence: proposal.body.confidence,
+        })
+        .expect(201);
+
+      expect(confirmed.body.status).toBe(AutoResolutionStatus.RESOLVED);
+      expect(confirmed.body.ticketId).toBeUndefined();
+
+      const autoResolution = await prisma.autoResolution.findUnique({
+        where: { id: confirmed.body.autoResolutionId },
+      });
+      expect(autoResolution?.status).toBe(AutoResolutionStatus.RESOLVED);
+
+      const article = await prisma.knowledgeArticle.findUnique({
+        where: { autoResolutionId: confirmed.body.autoResolutionId },
+      });
+      expect(article?.status).toBe('PROPOSED');
+    }, 30000);
+
+    // docs/06-cas-utilisation.md UC-015, cas d'erreur : RM-03 est revérifié
+    // à la confirmation — un script devenu sensible depuis la proposition
+    // fait basculer sur un ticket standard avec le contexte de la tentative.
+    it('falls back to creating a standard ticket when the proposed script has since become sensitive', async () => {
+      await prisma.script.update({
+        where: { id: autoResolveScriptId },
+        data: { isSensitive: true },
+      });
+
+      try {
+        const res = await request(app.getHttpServer())
+          .post('/automation/auto-resolve/confirm')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({
+            description:
+              "Le cache du spouleur d'impression est plein et bloque toutes les impressions.",
+            scriptId: autoResolveScriptId,
+            confidence: 0.97,
+          })
+          .expect(201);
+
+        expect(res.body.status).toBe(AutoResolutionStatus.FAILED_FALLBACK);
+        expect(res.body.ticketId).toEqual(expect.any(String));
+        autoResolveFallbackTicketId = res.body.ticketId;
+
+        const ticket = await prisma.ticket.findUnique({
+          where: { id: res.body.ticketId },
+        });
+        expect(ticket).not.toBeNull();
+        expect(ticket?.summary).toContain(
+          'Tentative de résolution automatique échouée',
+        );
+
+        const autoResolution = await prisma.autoResolution.findUnique({
+          where: { id: res.body.autoResolutionId },
+        });
+        expect(autoResolution?.status).toBe(
+          AutoResolutionStatus.FAILED_FALLBACK,
+        );
+        expect(autoResolution?.fallbackTicketId).toBe(res.body.ticketId);
+      } finally {
+        await prisma.script.update({
+          where: { id: autoResolveScriptId },
+          data: { isSensitive: false },
+        });
+      }
+    }, 30000);
+
+    it('returns 404 when the script no longer exists', async () => {
+      await request(app.getHttpServer())
+        .post('/automation/auto-resolve/confirm')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          description: 'Un problème quelconque, script inexistant.',
+          scriptId: '00000000-0000-0000-0000-000000000000',
+          confidence: 0.97,
+        })
+        .expect(404);
+    });
   });
 });
