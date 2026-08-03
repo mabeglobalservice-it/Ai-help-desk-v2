@@ -610,15 +610,28 @@ enum AiProviderName {
 // et §6 (GET /ai/conversations/:id/cost), docs/08 §4.4 : historique d'une
 // conversation de diagnostic (Agent Diagnostic uniquement pour l'instant),
 // avec le coût IA (tokens) par message pour permettre le suivi de coût.
+// docs/06-cas-utilisation.md UC-001, docs/09-architecture-agents-ia.md §3.2
+// (Agent Help Desk) : ONGOING tant que l'employé peut répondre à une
+// question de clarification ou confirmer si le problème persiste ;
+// RESOLVED si les étapes suggérées ont résolu le problème (US-02, aucun
+// ticket) ; ESCALATED dès qu'un ticket est créé à partir de cette
+// conversation (ticketId alors renseigné).
+enum AiConversationStatus {
+  ONGOING
+  RESOLVED
+  ESCALATED
+}
+
 model AiConversation {
-  id        String    @id @default(uuid())
-  userId    String    @map("user_id")
-  user      User      @relation(fields: [userId], references: [id])
-  ticketId  String?   @map("ticket_id")
-  ticket    Ticket?   @relation(fields: [ticketId], references: [id])
+  id        String               @id @default(uuid())
+  userId    String               @map("user_id")
+  user      User                 @relation(fields: [userId], references: [id])
+  ticketId  String?              @map("ticket_id")
+  ticket    Ticket?              @relation(fields: [ticketId], references: [id])
   provider  String
   model     String
-  startedAt DateTime  @default(now()) @map("started_at")
+  status    AiConversationStatus @default(ONGOING)
+  startedAt DateTime             @default(now()) @map("started_at")
 
   messages AiMessage[]
 

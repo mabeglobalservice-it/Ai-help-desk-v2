@@ -32,4 +32,13 @@ export class CreateTicketDto {
   @IsOptional()
   @IsUUID()
   ciId?: string;
+
+  // docs/06-cas-utilisation.md UC-001 étape 7 : quand le ticket provient
+  // d'une conversation de diagnostic (POST /diagnostics) dont le problème
+  // persiste, relie la conversation au ticket créé (AiConversation passe à
+  // ESCALATED) pour la traçabilité — voir TicketsService.create.
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  conversationId?: string;
 }

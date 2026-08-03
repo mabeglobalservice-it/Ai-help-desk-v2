@@ -9,6 +9,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import {
+  AiConversationStatus,
   NotificationType,
   Prisma,
   Role,
@@ -150,6 +151,28 @@ export class TicketsService {
         ticket,
       );
       await this.createAssignmentNotification(ticket, ticket.technicianId);
+    }
+
+    // docs/06-cas-utilisation.md UC-001 étape 7, docs/09 §3.2 : quand ce
+    // ticket provient d'une conversation de diagnostic dont le problème
+    // persiste (POST /diagnostics/:id/resolve), relie la conversation au
+    // ticket créé pour la traçabilité — best-effort, ne doit jamais faire
+    // échouer la création du ticket elle-même.
+    if (dto.conversationId) {
+      try {
+        await this.prisma.aiConversation.updateMany({
+          where: { id: dto.conversationId, userId: employeeId },
+          data: {
+            ticketId: ticket.id,
+            status: AiConversationStatus.ESCALATED,
+          },
+        });
+      } catch (error) {
+        console.error(
+          'Failed to link diagnostic conversation to ticket',
+          error,
+        );
+      }
     }
 
     return ticket;

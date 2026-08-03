@@ -12,8 +12,11 @@ import {
   getPriorities,
   getTicketCategories,
   proposeAutoResolution,
+  resolveDiagnosticConversation,
+  startOrContinueDiagnostic,
   type AutoResolveProposal,
   type ConfigurationItem,
+  type ConversationalDiagnosis,
   type Priority,
   type TicketCategory,
 } from "@/lib/api";
@@ -65,6 +68,23 @@ export default function NewTicketPage() {
     { status: "RESOLVED" } | { status: "FAILED_FALLBACK"; ticketId: string } | null
   >(null);
 
+  // docs/06-cas-utilisation.md UC-001 étapes 1-6, docs/09-architecture-
+  // agents-ia.md §3.2 (Agent Help Desk) : dialogue multi-tour, avant toute
+  // création de ticket (US-01/US-02/US-03).
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "agent"; content: string }[]>(
+    [],
+  );
+  const [chatConversationId, setChatConversationId] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatSending, setIsChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatDiagnosis, setChatDiagnosis] = useState<ConversationalDiagnosis | null>(null);
+  const [chatResolved, setChatResolved] = useState(false);
+  const [isChatResolving, setIsChatResolving] = useState(false);
+  // conversationId to link when the employee confirms the problem persists
+  // (US-03) — passed through to POST /tickets so the conversation escalates.
+  const [linkedConversationId, setLinkedConversationId] = useState<string | null>(null);
+
   useEffect(() => {
     const token = getToken();
     if (!token) {
@@ -107,6 +127,7 @@ export default function NewTicketPage() {
         title,
         summary: summary || undefined,
         ciId: ciId === NO_CI ? undefined : ciId,
+        conversationId: linkedConversationId ?? undefined,
       });
       router.push("/tickets");
     } catch (err) {
@@ -181,6 +202,105 @@ export default function NewTicketPage() {
     setAutoResolveProposal(null);
   }
 
+  // docs/06-cas-utilisation.md UC-001 étapes 1-6 : envoie la description
+  // initiale, ou la réponse à la dernière question de clarification posée
+  // par l'Agent Help Desk.
+  async function handleChatSend() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    const message = chatInput.trim();
+    if (!message) return;
+
+    setChatError(null);
+    setIsChatSending(true);
+    setChatMessages((prev) => [...prev, { role: "user", content: message }]);
+    setChatInput("");
+
+    try {
+      const result = await startOrContinueDiagnostic(token, {
+        message,
+        conversationId: chatConversationId ?? undefined,
+      });
+      setChatConversationId(result.conversationId);
+      if (result.status === "NEEDS_INFO") {
+        setChatMessages((prev) => [...prev, { role: "agent", content: result.question }]);
+      } else {
+        setChatDiagnosis(result.diagnosis);
+        setChatMessages((prev) => [
+          ...prev,
+          { role: "agent", content: result.diagnosis.causeProbable },
+        ]);
+      }
+    } catch (err) {
+      setChatError(
+        err instanceof ApiError ? err.message : "Impossible de contacter l'assistant pour le moment.",
+      );
+    } finally {
+      setIsChatSending(false);
+    }
+  }
+
+  // docs/06-cas-utilisation.md UC-001 étape 6, US-02 : les étapes suggérées
+  // ont résolu le problème, aucun ticket n'est nécessaire.
+  async function handleChatResolved() {
+    if (!chatConversationId) return;
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setChatError(null);
+    setIsChatResolving(true);
+    try {
+      await resolveDiagnosticConversation(token, chatConversationId, true);
+      setChatResolved(true);
+    } catch (err) {
+      setChatError(
+        err instanceof ApiError ? err.message : "Impossible de confirmer la résolution pour le moment.",
+      );
+    } finally {
+      setIsChatResolving(false);
+    }
+  }
+
+  // docs/06-cas-utilisation.md UC-001 étape 6-7, US-03 : le problème
+  // persiste — pré-remplit le formulaire manuel avec le diagnostic et lie la
+  // conversation au ticket qui sera créé (voir handleSubmit).
+  async function handleChatPersists() {
+    if (!chatConversationId || !chatDiagnosis) return;
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setChatError(null);
+    setIsChatResolving(true);
+    try {
+      await resolveDiagnosticConversation(token, chatConversationId, false);
+      setTitle(chatDiagnosis.title);
+      setCategoryId(chatDiagnosis.categoryId);
+      setPriorityId(chatDiagnosis.priorityId);
+      setSummary(
+        `${chatDiagnosis.causeProbable}\n\nÉtapes déjà essayées sans succès :\n${chatDiagnosis.suggestedSteps
+          .map((step, i) => `${i + 1}. ${step}`)
+          .join("\n")}`,
+      );
+      setLinkedConversationId(chatConversationId);
+      setChatDiagnosis(null);
+    } catch (err) {
+      setChatError(
+        err instanceof ApiError ? err.message : "Impossible d'enregistrer la réponse pour le moment.",
+      );
+    } finally {
+      setIsChatResolving(false);
+    }
+  }
+
   const backLink = (
     <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/tickets" />}>
       Retour aux tickets
@@ -196,6 +316,24 @@ export default function NewTicketPage() {
             <AlertDescription>
               Seul le rôle EMPLOYEE peut créer un ticket. Retournez à la liste pour consulter les
               tickets existants.
+            </AlertDescription>
+          </Alert>
+        </main>
+      </div>
+    );
+  }
+
+  // docs/06-cas-utilisation.md UC-001 étape 6, US-02 : problème résolu par
+  // les étapes suggérées de l'Agent Help Desk, sans création de ticket.
+  if (chatResolved) {
+    return (
+      <div className="min-h-screen bg-background">
+        <AppHeader title="Nouveau ticket" action={backLink} />
+        <main className="mx-auto max-w-lg px-6 py-16">
+          <Alert>
+            <AlertDescription>
+              Problème résolu grâce aux étapes suggérées par l&apos;assistant — aucun ticket n&apos;a
+              été nécessaire.
             </AlertDescription>
           </Alert>
         </main>
@@ -251,6 +389,103 @@ export default function NewTicketPage() {
       <AppHeader title="Nouveau ticket" action={backLink} />
 
       <main className="mx-auto max-w-lg px-6 py-8">
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-xl">Assistant Help Desk</CardTitle>
+            <CardDescription>
+              docs/06 UC-001 : décrivez votre problème en langage naturel — l&apos;assistant pose au
+              besoin une question avant de proposer une cause probable et des étapes à essayer.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {chatMessages.length > 0 ? (
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded-md border p-3">
+                {chatMessages.map((message, index) => (
+                  <div key={index} className={message.role === "user" ? "text-right" : "text-left"}>
+                    <span
+                      className={`inline-block max-w-[85%] rounded-lg px-3 py-1.5 text-sm ${
+                        message.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground"
+                      }`}
+                    >
+                      {message.content}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {chatError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{chatError}</AlertDescription>
+              </Alert>
+            ) : null}
+
+            {chatDiagnosis ? (
+              <div className="space-y-3 rounded-md border border-primary p-3">
+                <p className="text-sm">
+                  <span className="font-medium">Cause probable :</span> {chatDiagnosis.causeProbable}
+                </p>
+                <div className="text-sm">
+                  <span className="font-medium">Étapes à essayer :</span>
+                  <ol className="ml-4 list-decimal space-y-1">
+                    {chatDiagnosis.suggestedSteps.map((step, index) => (
+                      <li key={index}>{step}</li>
+                    ))}
+                  </ol>
+                </div>
+                {chatDiagnosis.degraded ? (
+                  <Alert>
+                    <AlertDescription>
+                      L&apos;IA n&apos;est pas disponible pour le moment : diagnostic générique en
+                      mode dégradé.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <div className="flex gap-2">
+                  <Button className="flex-1" disabled={isChatResolving} onClick={handleChatResolved}>
+                    {isChatResolving ? "..." : "Ça a résolu mon problème"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    disabled={isChatResolving}
+                    onClick={handleChatPersists}
+                  >
+                    Le problème persiste, créer un ticket
+                  </Button>
+                </div>
+              </div>
+            ) : linkedConversationId ? (
+              <Alert>
+                <AlertDescription>
+                  Diagnostic enregistré : le formulaire ci-dessous a été pré-rempli avec la catégorie,
+                  la priorité et le contexte du problème. Vérifiez les champs puis créez le ticket.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <div className="flex gap-2">
+                <Input
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="Décrivez votre problème..."
+                  disabled={isChatSending}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void handleChatSend();
+                    }
+                  }}
+                />
+                <Button onClick={handleChatSend} disabled={isChatSending || !chatInput.trim()}>
+                  {isChatSending ? "..." : "Envoyer"}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {autoResolveProposal?.eligible ? (
           <Card className="mb-6 border-primary">
             <CardHeader>

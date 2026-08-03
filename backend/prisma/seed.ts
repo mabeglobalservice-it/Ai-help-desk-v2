@@ -56,7 +56,8 @@ const aiAgents = [
   },
   {
     name: 'HELPDESK',
-    description: 'Assistance générale employé — non encore implémenté.',
+    description:
+      "Dialogue conversationnel avec l'employé (docs/09 §3.2) : pose des questions de clarification, propose une cause probable et des étapes de résolution avant la création d'un ticket.",
   },
 ] as const;
 

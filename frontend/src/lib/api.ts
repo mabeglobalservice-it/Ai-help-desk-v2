@@ -754,6 +754,7 @@ export interface CreateTicketInput {
   title: string;
   summary?: string;
   ciId?: string;
+  conversationId?: string;
 }
 
 export function createTicket(token: string, input: CreateTicketInput): Promise<Ticket> {
@@ -790,6 +791,50 @@ export function aiDiagnoseTicket(token: string, description: string): Promise<Ti
   return apiFetch<TicketDiagnosis>("/tickets/ai-diagnose", token, {
     method: "POST",
     body: JSON.stringify({ description }),
+  });
+}
+
+// docs/06-cas-utilisation.md UC-001 étapes 1-6, docs/09-architecture-agents-
+// ia.md §3.2 (Agent Help Desk) : dialogue multi-tour — au plus une question
+// de clarification à la fois, puis un diagnostic (cause probable + étapes
+// de self-service) avant toute création de ticket.
+export interface ConversationalDiagnosis {
+  title: string;
+  categoryId: string;
+  categoryName: string;
+  priorityId: string;
+  priorityName: string;
+  degraded: boolean;
+  causeProbable: string;
+  suggestedSteps: string[];
+  confidence: number;
+}
+
+export type DiagnosticTurnResult =
+  | { status: "NEEDS_INFO"; conversationId: string; question: string }
+  | { status: "DIAGNOSED"; conversationId: string; diagnosis: ConversationalDiagnosis };
+
+export function startOrContinueDiagnostic(
+  token: string,
+  input: { message: string; conversationId?: string },
+): Promise<DiagnosticTurnResult> {
+  return apiFetch<DiagnosticTurnResult>("/diagnostics", token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+// docs/06-cas-utilisation.md UC-001 étape 6 (US-02/US-03).
+export type ResolveDiagnosticResult = { status: "RESOLVED" } | { status: "PERSISTS" };
+
+export function resolveDiagnosticConversation(
+  token: string,
+  conversationId: string,
+  resolved: boolean,
+): Promise<ResolveDiagnosticResult> {
+  return apiFetch<ResolveDiagnosticResult>(`/diagnostics/${conversationId}/resolve`, token, {
+    method: "POST",
+    body: JSON.stringify({ resolved }),
   });
 }
 

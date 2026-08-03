@@ -1,12 +1,15 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   AiAgentName,
+  AiConversationStatus,
   AiMessageRole,
   AiProviderName,
 } from '../../generated/prisma/client';
@@ -153,6 +156,58 @@ interface PriorityOption {
   name: string;
   level: number;
 }
+
+// docs/06-cas-utilisation.md UC-001, docs/09-architecture-agents-ia.md §3.2
+// (Agent Help Desk) : diagnostic conversationnel multi-tour — cause
+// probable + étapes de self-service (US-02), avant toute création de
+// ticket (US-03).
+export interface ConversationalDiagnosis extends DiagnosisResult {
+  causeProbable: string;
+  suggestedSteps: string[];
+  confidence: number;
+}
+
+export type DiagnosticTurnResult =
+  | { status: 'NEEDS_INFO'; conversationId: string; question: string }
+  | {
+      status: 'DIAGNOSED';
+      conversationId: string;
+      diagnosis: ConversationalDiagnosis;
+    };
+
+interface ConversationTurnEvaluation {
+  needsMoreInfo: boolean;
+  question?: string;
+  title?: string;
+  categoryId?: string;
+  priorityId?: string;
+  causeProbable?: string;
+  suggestedSteps?: string[];
+  confidence?: number;
+}
+
+// docs/09-architecture-agents-ia.md §3.2 : contrairement à l'Agent
+// Diagnostic (mots-clés en repli, RM-05), l'Agent Help Desk ne pose jamais
+// de question en mode dégradé — sans IA, un diagnostic immédiat (mêmes
+// mots-clés locaux que diagnoseTicket) est produit directement, avec des
+// étapes génériques et une confiance délibérément basse.
+const HELPDESK_SYSTEM_PROMPT =
+  "Tu es l'Agent Help Desk d'un service d'assistance informatique interne. Tu dialogues directement " +
+  'avec un employé qui décrit un problème informatique en langage naturel, sans vocabulaire technique. ' +
+  "Ton objectif : poser au plus UNE question de clarification à la fois si l'information manque pour " +
+  'identifier une cause probable, puis proposer une cause probable et des étapes concrètes que ' +
+  "l'employé peut essayer lui-même avant qu'un technicien n'intervienne. Choisis strictement la " +
+  "catégorie et la priorité parmi celles fournies. Ne pose jamais plus d'une question par tour. Ne " +
+  "fabrique jamais de détails sur l'environnement technique de l'organisation que tu ne connais pas.";
+
+const MAX_CLARIFYING_TURNS = 3;
+
+const DEGRADED_SUGGESTED_STEPS = [
+  "Redémarrez l'appareil ou l'application concernée.",
+  'Vérifiez les branchements et la connexion réseau.',
+  'Si le problème persiste après ces étapes, un ticket sera créé pour ' +
+    "qu'un technicien prenne le relais.",
+];
 
 // docs/06-cas-utilisation.md RM-05: keyword synonyms for the local fallback
 // diagnosis used when the AI provider is unavailable, keyed by normalized
@@ -570,6 +625,369 @@ export class AiService {
     const firstSentence = trimmed.split(/(?<=[.!?])\s/)[0];
     const base = firstSentence.length > 5 ? firstSentence : trimmed;
     return base.length > 80 ? `${base.slice(0, 77)}...` : base;
+  }
+
+  // docs/06-cas-utilisation.md UC-001 étapes 1-6, docs/09-architecture-
+  // agents-ia.md §3.2 (Agent Help Desk) : dialogue multi-tour — pose une
+  // question de clarification à la fois (jusqu'à MAX_CLARIFYING_TURNS),
+  // puis fournit un diagnostic (cause probable + étapes de self-service)
+  // que l'employé confirme ou infirme via resolveConversation
+  // (DiagnosticsService). conversationId=null démarre une nouvelle
+  // conversation ; sinon, message est la réponse de l'employé à la
+  // dernière question posée.
+  async converseDiagnostic(
+    conversationId: string | null,
+    userId: string,
+    message: string,
+  ): Promise<DiagnosticTurnResult> {
+    const [categories, priorities] = await Promise.all([
+      this.prisma.ticketCategory.findMany({ select: { id: true, name: true } }),
+      this.prisma.priority.findMany({
+        select: { id: true, name: true, level: true },
+        orderBy: { level: 'asc' },
+      }),
+    ]);
+
+    if (categories.length === 0 || priorities.length === 0) {
+      throw new ServiceUnavailableException(
+        "Aucune catégorie ou priorité n'est configurée pour le moment.",
+      );
+    }
+
+    const conversation = await this.getOrStartConversation(
+      conversationId,
+      userId,
+    );
+
+    await this.prisma.aiMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: AiMessageRole.USER,
+        content: message,
+      },
+    });
+
+    const history = [
+      ...conversation.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      { role: AiMessageRole.USER, content: message },
+    ];
+    const userTurns = history.filter(
+      (m) => m.role === AiMessageRole.USER,
+    ).length;
+    const forceDiagnosis = userTurns >= MAX_CLARIFYING_TURNS;
+
+    const { enabled, agentId } = await this.checkAgentStatus(
+      AiAgentName.HELPDESK,
+    );
+
+    if (!this.client || !enabled) {
+      this.logger.warn(
+        'Agent Help Desk indisponible (clé API absente, agent ou fournisseur désactivé) : diagnostic immédiat en mode dégradé (mots-clés locaux)',
+      );
+      return this.degradeToImmediateDiagnosis(
+        conversation.id,
+        agentId,
+        history,
+        categories,
+        priorities,
+      );
+    }
+
+    try {
+      const startedAt = Date.now();
+      const { evaluation, usage } = await this.aiConverseDiagnostic(
+        this.client,
+        history,
+        categories,
+        priorities,
+        forceDiagnosis,
+      );
+      const responseTimeMs = Date.now() - startedAt;
+      const tokenCost = this.computeTokenCost(usage);
+
+      if (evaluation.needsMoreInfo && !forceDiagnosis) {
+        const question =
+          evaluation.question?.trim() ||
+          'Pouvez-vous préciser votre problème ?';
+        await this.prisma.aiMessage.create({
+          data: {
+            conversationId: conversation.id,
+            agentId: agentId ?? undefined,
+            role: AiMessageRole.AGENT,
+            content: question,
+            responseTimeMs,
+            tokenCost,
+          },
+        });
+        return {
+          status: 'NEEDS_INFO',
+          conversationId: conversation.id,
+          question,
+        };
+      }
+
+      const diagnosis = this.buildDiagnosisFromEvaluation(
+        evaluation,
+        categories,
+        priorities,
+        message,
+        false,
+      );
+      await this.recordConversationDiagnosis(
+        conversation.id,
+        agentId,
+        diagnosis,
+        responseTimeMs,
+        tokenCost,
+      );
+      return {
+        status: 'DIAGNOSED',
+        conversationId: conversation.id,
+        diagnosis,
+      };
+    } catch (error) {
+      this.logger.error(
+        'Échec du dialogue IA, repli sur un diagnostic immédiat en mode dégradé (mots-clés locaux)',
+        error,
+      );
+      return this.degradeToImmediateDiagnosis(
+        conversation.id,
+        agentId,
+        history,
+        categories,
+        priorities,
+      );
+    }
+  }
+
+  private async getOrStartConversation(
+    conversationId: string | null,
+    userId: string,
+  ) {
+    if (!conversationId) {
+      return this.prisma.aiConversation.create({
+        data: { userId, provider: AiProviderName.CLAUDE, model: MODEL },
+        include: { messages: { orderBy: { createdAt: 'asc' } } },
+      });
+    }
+
+    const conversation = await this.prisma.aiConversation.findUnique({
+      where: { id: conversationId },
+      include: { messages: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (!conversation || conversation.userId !== userId) {
+      throw new NotFoundException(`Conversation ${conversationId} introuvable`);
+    }
+    if (conversation.status !== AiConversationStatus.ONGOING) {
+      throw new BadRequestException('Cette conversation est déjà terminée');
+    }
+    return conversation;
+  }
+
+  private async degradeToImmediateDiagnosis(
+    conversationId: string,
+    agentId: string | null,
+    history: { role: AiMessageRole; content: string }[],
+    categories: CategoryOption[],
+    priorities: PriorityOption[],
+  ): Promise<DiagnosticTurnResult> {
+    const combinedDescription = history
+      .filter((m) => m.role === AiMessageRole.USER)
+      .map((m) => m.content)
+      .join('\n');
+
+    const localResult = this.localDiagnose(
+      combinedDescription,
+      categories,
+      priorities,
+    );
+    const diagnosis: ConversationalDiagnosis = {
+      ...localResult,
+      causeProbable:
+        "L'IA n'est pas disponible pour le moment : voici des étapes générales à essayer avant qu'un technicien n'examine votre demande.",
+      suggestedSteps: DEGRADED_SUGGESTED_STEPS,
+      confidence: 0.4,
+    };
+    await this.recordConversationDiagnosis(
+      conversationId,
+      agentId,
+      diagnosis,
+      null,
+      null,
+    );
+    return { status: 'DIAGNOSED', conversationId, diagnosis };
+  }
+
+  private buildDiagnosisFromEvaluation(
+    evaluation: ConversationTurnEvaluation,
+    categories: CategoryOption[],
+    priorities: PriorityOption[],
+    lastMessage: string,
+    degraded: boolean,
+  ): ConversationalDiagnosis {
+    const category =
+      categories.find((c) => c.id === evaluation.categoryId) ?? categories[0];
+    const priority =
+      priorities.find((p) => p.id === evaluation.priorityId) ?? priorities[0];
+
+    return {
+      title: evaluation.title?.trim() || lastMessage.slice(0, 80),
+      categoryId: category.id,
+      categoryName: category.name,
+      priorityId: priority.id,
+      priorityName: priority.name,
+      degraded,
+      causeProbable:
+        evaluation.causeProbable?.trim() ||
+        'Cause à déterminer par un technicien.',
+      suggestedSteps:
+        evaluation.suggestedSteps && evaluation.suggestedSteps.length > 0
+          ? evaluation.suggestedSteps
+          : ['Un technicien examinera votre demande.'],
+      confidence: evaluation.confidence ?? 0.5,
+    };
+  }
+
+  private async recordConversationDiagnosis(
+    conversationId: string,
+    agentId: string | null,
+    diagnosis: ConversationalDiagnosis,
+    responseTimeMs: number | null,
+    tokenCost: number | null,
+  ): Promise<void> {
+    await this.prisma.aiMessage.create({
+      data: {
+        conversationId,
+        agentId: agentId ?? undefined,
+        role: AiMessageRole.AGENT,
+        content:
+          `Cause probable : ${diagnosis.causeProbable}\n\n` +
+          `Étapes suggérées :\n${diagnosis.suggestedSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}\n\n` +
+          `Catégorie : ${diagnosis.categoryName}\nPriorité : ${diagnosis.priorityName}` +
+          (diagnosis.degraded ? ' (mode dégradé)' : ''),
+        confidenceScore: diagnosis.confidence,
+        responseTimeMs: responseTimeMs ?? undefined,
+        tokenCost: tokenCost ?? undefined,
+      },
+    });
+  }
+
+  private async aiConverseDiagnostic(
+    client: Anthropic,
+    history: { role: AiMessageRole; content: string }[],
+    categories: CategoryOption[],
+    priorities: PriorityOption[],
+    forceDiagnosis: boolean,
+  ): Promise<{
+    evaluation: ConversationTurnEvaluation;
+    usage: Anthropic.Usage;
+  }> {
+    const categoryList = categories
+      .map((category) => `- ${category.id}: ${category.name}`)
+      .join('\n');
+    const priorityList = priorities
+      .map(
+        (priority) =>
+          `- ${priority.id}: ${priority.name} (niveau ${priority.level})`,
+      )
+      .join('\n');
+
+    // Typed explicitly (rather than an inline `as` cast on the ternary
+    // below) so a stray `no-unnecessary-type-assertion` autofix from
+    // `npm run lint` can't silently widen the role back to `string` — see
+    // the identical incident documented for roles.guard.ts.
+    const messages: { role: 'user' | 'assistant'; content: string }[] =
+      history.map((entry) => ({
+        role: entry.role === AiMessageRole.USER ? 'user' : 'assistant',
+        content: entry.content,
+      }));
+
+    const system =
+      HELPDESK_SYSTEM_PROMPT +
+      `\n\nCatégories disponibles :\n${categoryList}\n\n` +
+      `Priorités disponibles :\n${priorityList}` +
+      (forceDiagnosis
+        ? '\n\nTu as déjà posé assez de questions : tu DOIS cette fois ' +
+          'répondre avec needsMoreInfo=false et fournir un diagnostic, ' +
+          "même si l'incertitude persiste (baisse alors le score de " +
+          'confidence en conséquence).'
+        : '');
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 768,
+      system,
+      messages,
+      tools: [
+        {
+          name: 'continue_diagnostic',
+          description:
+            'Pose une question de clarification, ou fournit un diagnostic complet (cause probable, étapes suggérées, catégorie, priorité, confiance)',
+          input_schema: {
+            type: 'object',
+            properties: {
+              needsMoreInfo: {
+                type: 'boolean',
+                description:
+                  'true si une question de clarification est nécessaire avant de diagnostiquer',
+              },
+              question: {
+                type: 'string',
+                description: 'Question à poser (requis si needsMoreInfo=true)',
+              },
+              title: {
+                type: 'string',
+                description:
+                  'Titre concis du problème (requis si needsMoreInfo=false)',
+              },
+              categoryId: {
+                type: 'string',
+                enum: categories.map((category) => category.id),
+              },
+              priorityId: {
+                type: 'string',
+                enum: priorities.map((priority) => priority.id),
+              },
+              causeProbable: {
+                type: 'string',
+                description: 'Cause probable (requis si needsMoreInfo=false)',
+              },
+              suggestedSteps: {
+                type: 'array',
+                items: { type: 'string' },
+                description:
+                  "Étapes concrètes que l'employé peut essayer lui-même (requis si needsMoreInfo=false)",
+              },
+              confidence: {
+                type: 'number',
+                description:
+                  'Niveau de confiance du diagnostic, entre 0 et 1 (requis si needsMoreInfo=false)',
+              },
+            },
+            required: ['needsMoreInfo'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'continue_diagnostic' },
+    });
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+    );
+
+    if (!toolUse) {
+      throw new Error(
+        "Réponse de l'IA inattendue : aucune évaluation structurée reçue",
+      );
+    }
+
+    return {
+      evaluation: toolUse.input as ConversationTurnEvaluation,
+      usage: response.usage,
+    };
   }
 
   // docs/10-architecture-rag.md §11 "Apprentissage continu" : un ticket

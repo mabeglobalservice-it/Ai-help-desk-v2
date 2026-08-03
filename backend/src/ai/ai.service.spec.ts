@@ -1,6 +1,8 @@
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AiService } from './ai.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiConversationStatus } from '../../generated/prisma/client';
 
 describe('AiService', () => {
   let service: AiService;
@@ -9,7 +11,7 @@ describe('AiService', () => {
     priority: { findMany: jest.Mock };
     aiAgent: { findUnique: jest.Mock };
     aiProviderConfig: { findUnique: jest.Mock };
-    aiConversation: { create: jest.Mock };
+    aiConversation: { create: jest.Mock; findUnique: jest.Mock };
     aiMessage: { create: jest.Mock };
   };
   const originalApiKey = process.env.ANTHROPIC_API_KEY;
@@ -37,7 +39,8 @@ describe('AiService', () => {
       aiAgent: { findUnique: jest.fn().mockResolvedValue(null) },
       aiProviderConfig: { findUnique: jest.fn().mockResolvedValue(null) },
       aiConversation: {
-        create: jest.fn().mockResolvedValue({ id: 'conv-1' }),
+        create: jest.fn().mockResolvedValue({ id: 'conv-1', messages: [] }),
+        findUnique: jest.fn(),
       },
       aiMessage: { create: jest.fn().mockResolvedValue({ id: 'msg-1' }) },
     };
@@ -275,6 +278,139 @@ describe('AiService', () => {
       expect(result).toBeNull();
       expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
         where: { name: 'AUTOMATION' },
+      });
+    });
+  });
+
+  // docs/06-cas-utilisation.md UC-001, docs/09-architecture-agents-ia.md §3.2
+  // (Agent Help Desk). Unlike the real-Claude tool-use path (covered by e2e
+  // tests against the real Anthropic API), these unit tests exercise the
+  // degraded-mode path (no API key) and the ownership/status guards in
+  // getOrStartConversation, following the established pattern for the other
+  // agents in this file.
+  describe('converseDiagnostic', () => {
+    const categories = [
+      { id: 'cat-materiel', name: 'Matériel' },
+      { id: 'cat-logiciel', name: 'Logiciel' },
+    ];
+    const priorities = [
+      { id: 'prio-faible', name: 'Faible', level: 1 },
+      { id: 'prio-urgente', name: 'Urgente', level: 3 },
+    ];
+
+    beforeEach(() => {
+      prisma.ticketCategory.findMany.mockResolvedValue(categories);
+      prisma.priority.findMany.mockResolvedValue(priorities);
+    });
+
+    it('starts a new conversation and immediately returns a degraded diagnosis when no API key is configured (never asks a question)', async () => {
+      const result = await service.converseDiagnostic(
+        null,
+        'user-1',
+        "L'imprimante ne s'allume plus depuis ce matin",
+      );
+
+      expect(prisma.aiConversation.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'user-1',
+          provider: 'CLAUDE',
+          model: 'claude-sonnet-5',
+        },
+        include: { messages: { orderBy: { createdAt: 'asc' } } },
+      });
+      expect(result.status).toBe('DIAGNOSED');
+      if (result.status !== 'DIAGNOSED') return;
+      expect(result.diagnosis.degraded).toBe(true);
+      expect(result.diagnosis.categoryId).toBe('cat-materiel');
+      expect(result.diagnosis.confidence).toBe(0.4);
+      expect(result.diagnosis.suggestedSteps.length).toBeGreaterThan(0);
+    });
+
+    it('continues an existing ongoing conversation using its prior history', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        userId: 'user-1',
+        status: AiConversationStatus.ONGOING,
+        messages: [{ role: 'USER', content: 'Mon PC ne démarre plus' }],
+      });
+
+      const result = await service.converseDiagnostic(
+        'conv-1',
+        'user-1',
+        'Windows 11',
+      );
+
+      expect(prisma.aiConversation.findUnique).toHaveBeenCalledWith({
+        where: { id: 'conv-1' },
+        include: { messages: { orderBy: { createdAt: 'asc' } } },
+      });
+      expect(result.status).toBe('DIAGNOSED');
+      expect(result.conversationId).toBe('conv-1');
+    });
+
+    it('throws NotFoundException when the conversation does not exist', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.converseDiagnostic('conv-missing', 'user-1', 'oui'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException when the conversation belongs to another user', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        userId: 'user-2',
+        status: AiConversationStatus.ONGOING,
+        messages: [],
+      });
+
+      await expect(
+        service.converseDiagnostic('conv-1', 'user-1', 'oui'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws BadRequestException when the conversation is already terminated', async () => {
+      prisma.aiConversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        userId: 'user-1',
+        status: AiConversationStatus.RESOLVED,
+        messages: [],
+      });
+
+      await expect(
+        service.converseDiagnostic('conv-1', 'user-1', 'oui'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('records the degraded diagnosis as an AGENT message on the conversation', async () => {
+      await service.converseDiagnostic(null, 'user-1', 'Problème quelconque');
+
+      expect(prisma.aiMessage.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            conversationId: 'conv-1',
+            role: 'AGENT',
+            confidenceScore: 0.4,
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('falls back to the degraded diagnosis when the Help Desk agent is disabled, even with an API key configured', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+      prisma.aiAgent.findUnique.mockResolvedValue({ isActive: false });
+      prisma.aiProviderConfig.findUnique.mockResolvedValue({ isActive: true });
+      service = await buildService();
+
+      const result = await service.converseDiagnostic(
+        null,
+        'user-1',
+        'Problème quelconque',
+      );
+
+      expect(result.status).toBe('DIAGNOSED');
+      expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
+        where: { name: 'HELPDESK' },
       });
     });
   });
