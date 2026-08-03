@@ -678,6 +678,13 @@ export function updateTeam(token: string, id: string, input: UpdateTeamInput): P
   });
 }
 
+// docs/06-cas-utilisation.md UC-031 étape 3, docs/05-user-stories.md US-13 :
+// spécialités d'un technicien, indépendantes de son équipe (teamId).
+export interface TechnicianSpecialty {
+  categoryId: string;
+  category: TicketCategory;
+}
+
 export interface AdminUser {
   id: string;
   email: string;
@@ -690,6 +697,7 @@ export interface AdminUser {
   isActive: boolean;
   canApproveAutomations: boolean;
   createdAt: string;
+  specialties: TechnicianSpecialty[];
 }
 
 export function getUsers(token: string): Promise<AdminUser[]> {
@@ -724,6 +732,19 @@ export function updateUser(token: string, id: string, input: UpdateUserInput): P
   return apiFetch<AdminUser>(`/users/${id}`, token, {
     method: "PATCH",
     body: JSON.stringify(input),
+  });
+}
+
+// docs/11-documentation-api.md §3 : remplace intégralement l'ensemble des
+// spécialités du technicien (Admin uniquement).
+export function updateUserSpecialties(
+  token: string,
+  id: string,
+  categoryIds: string[],
+): Promise<AdminUser> {
+  return apiFetch<AdminUser>(`/users/${id}/specialties`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ categoryIds }),
   });
 }
 

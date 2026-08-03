@@ -17,6 +17,7 @@ import { Role } from '../../generated/prisma/client';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateSpecialtiesDto } from './dto/update-specialties.dto';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -69,5 +70,24 @@ export class UsersController {
   ) {
     const requester = req.user as { userId: string };
     return this.usersService.update(id, updateUserDto, requester.userId);
+  }
+
+  @ApiOperation({
+    summary: 'Associe un technicien à une ou plusieurs spécialités',
+    description: 'Réservé au rôle ADMIN (UC-031)',
+  })
+  @Roles(Role.ADMIN)
+  @Patch(':id/specialties')
+  updateSpecialties(
+    @Param('id') id: string,
+    @Body() dto: UpdateSpecialtiesDto,
+    @Req() req: Request,
+  ) {
+    const requester = req.user as { userId: string };
+    return this.usersService.updateSpecialties(
+      id,
+      dto.categoryIds,
+      requester.userId,
+    );
   }
 }

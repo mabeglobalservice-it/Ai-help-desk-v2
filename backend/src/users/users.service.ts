@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -6,7 +7,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { Prisma } from '../../generated/prisma/client';
+import { Prisma, Role } from '../../generated/prisma/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -25,6 +26,9 @@ const USER_SELECT = {
   isActive: true,
   canApproveAutomations: true,
   createdAt: true,
+  // docs/06-cas-utilisation.md UC-031 étape 3 : spécialités du technicien,
+  // indépendantes de l'équipe (teamId ci-dessus).
+  specialties: { include: { category: true } },
 } as const;
 
 // docs/06-cas-utilisation.md UC-031: seuls ces champs sont "administratifs"
@@ -170,5 +174,51 @@ export class UsersService {
     });
 
     return updated;
+  }
+
+  // docs/06-cas-utilisation.md UC-031 étape 3, docs/05-user-stories.md
+  // US-13 : remplace intégralement l'ensemble des spécialités du
+  // technicien (comme un PATCH complet, pas un ajout incrémental) — les
+  // catégories inconnues sont rejetées explicitement plutôt que de
+  // provoquer une violation de contrainte de clé étrangère brute.
+  async updateSpecialties(id: string, categoryIds: string[], actorId: string) {
+    const user = await this.findOne(id);
+    if (user.role !== Role.TECHNICIAN) {
+      throw new BadRequestException(
+        'Seul un utilisateur avec le rôle TECHNICIAN peut avoir des spécialités',
+      );
+    }
+
+    if (categoryIds.length > 0) {
+      const existingCategories = await this.prisma.ticketCategory.findMany({
+        where: { id: { in: categoryIds } },
+        select: { id: true },
+      });
+      if (existingCategories.length !== new Set(categoryIds).size) {
+        throw new BadRequestException(
+          'Une ou plusieurs catégories spécifiées sont introuvables',
+        );
+      }
+    }
+
+    const beforeCategoryIds = user.specialties.map((s) => s.categoryId);
+
+    await this.prisma.$transaction([
+      this.prisma.technicianSpecialty.deleteMany({ where: { userId: id } }),
+      this.prisma.technicianSpecialty.createMany({
+        data: categoryIds.map((categoryId) => ({ userId: id, categoryId })),
+      }),
+    ]);
+
+    await this.auditLogService.record({
+      actorId,
+      action: 'USER_SPECIALTIES_UPDATED',
+      targetType: 'User',
+      targetId: id,
+      beforeState: { categoryIds: beforeCategoryIds },
+      afterState: { categoryIds },
+    });
+
+    return this.findOne(id);
   }
 }

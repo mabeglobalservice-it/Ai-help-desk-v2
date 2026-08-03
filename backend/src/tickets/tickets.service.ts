@@ -235,28 +235,42 @@ export class TicketsService {
     return candidate;
   }
 
-  // docs/06-cas-utilisation.md UC-001, cas d'erreur: finds technicians in
-  // the team(s) matching the category, falling back to all active
-  // technicians (generalistes) if no team is configured for it, and returns
-  // whichever candidate currently has the fewest open tickets. Returns null
-  // rather than throwing when nobody is available at all, so automatic
-  // assignment at ticket creation can degrade to "unassigned" instead of
-  // failing the whole creation.
+  // docs/06-cas-utilisation.md UC-001 cas d'erreur, UC-031 étape 3,
+  // docs/05-user-stories.md US-13 : priorité aux techniciens ayant
+  // explicitement cette catégorie comme spécialité (TechnicianSpecialty,
+  // gérée par un Admin) ; à défaut, repli sur l'équipe associée à la
+  // catégorie (Team.categoryId, mécanisme pré-existant) ; à défaut,
+  // n'importe quel technicien actif (généraliste). Retourne celui qui a
+  // actuellement le moins de tickets ouverts. Retourne null plutôt que de
+  // lever une exception quand personne n'est disponible, pour que
+  // l'assignation automatique degrade vers "non assigné" au lieu de faire
+  // échouer la création du ticket.
   private async findLeastLoadedTechnician(categoryId: string) {
-    const matchingTeams = await this.prisma.team.findMany({
-      where: { categoryId },
-      select: { id: true },
-    });
-    const teamIds = matchingTeams.map((team) => team.id);
-
-    const candidates = await this.prisma.user.findMany({
-      where: {
-        role: Role.TECHNICIAN,
-        isActive: true,
-        ...(teamIds.length > 0 ? { teamId: { in: teamIds } } : {}),
+    const specialists = await this.prisma.technicianSpecialty.findMany({
+      where: { categoryId, user: { role: Role.TECHNICIAN, isActive: true } },
+      select: {
+        user: { select: { id: true, displayName: true, email: true } },
       },
-      select: { id: true, displayName: true, email: true },
     });
+
+    let candidates = specialists.map((specialist) => specialist.user);
+
+    if (candidates.length === 0) {
+      const matchingTeams = await this.prisma.team.findMany({
+        where: { categoryId },
+        select: { id: true },
+      });
+      const teamIds = matchingTeams.map((team) => team.id);
+
+      candidates = await this.prisma.user.findMany({
+        where: {
+          role: Role.TECHNICIAN,
+          isActive: true,
+          ...(teamIds.length > 0 ? { teamId: { in: teamIds } } : {}),
+        },
+        select: { id: true, displayName: true, email: true },
+      });
+    }
 
     if (candidates.length === 0) return null;
 

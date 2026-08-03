@@ -7,12 +7,15 @@ import {
   createUser,
   getDepartments,
   getTeams,
+  getTicketCategories,
   getUsers,
   updateUser,
+  updateUserSpecialties,
   type AdminUser,
   type Department,
   type Role,
   type Team,
+  type TicketCategory,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
@@ -60,6 +63,7 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [categories, setCategories] = useState<TicketCategory[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
 
@@ -110,6 +114,11 @@ export default function AdminUsersPage() {
       .then(setTeams)
       .catch(() => {
         // best-effort: team dropdown just stays empty
+      });
+    getTicketCategories(token)
+      .then(setCategories)
+      .catch(() => {
+        // best-effort: specialty picker just stays empty
       });
   }, [router, user, loadUsers]);
 
@@ -211,6 +220,50 @@ export default function AdminUsersPage() {
     } catch (err) {
       setRowError(
         err instanceof ApiError ? err.message : "Impossible de modifier ce droit pour le moment.",
+      );
+    }
+  }
+
+  // docs/06-cas-utilisation.md UC-031 étape 3 : l'API remplace l'ensemble
+  // complet des spécialités — l'ajout/retrait ci-dessous recalcule la liste
+  // complète côté client avant d'appeler le PATCH.
+  async function handleAddSpecialty(targetUser: AdminUser, categoryId: string) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setRowError(null);
+    try {
+      const nextCategoryIds = [
+        ...targetUser.specialties.map((s) => s.categoryId),
+        categoryId,
+      ];
+      await updateUserSpecialties(token, targetUser.id, nextCategoryIds);
+      await loadUsers(token);
+    } catch (err) {
+      setRowError(
+        err instanceof ApiError ? err.message : "Impossible d'ajouter cette spécialité pour le moment.",
+      );
+    }
+  }
+
+  async function handleRemoveSpecialty(targetUser: AdminUser, categoryId: string) {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    setRowError(null);
+    try {
+      const nextCategoryIds = targetUser.specialties
+        .map((s) => s.categoryId)
+        .filter((id) => id !== categoryId);
+      await updateUserSpecialties(token, targetUser.id, nextCategoryIds);
+      await loadUsers(token);
+    } catch (err) {
+      setRowError(
+        err instanceof ApiError ? err.message : "Impossible de retirer cette spécialité pour le moment.",
       );
     }
   }
@@ -381,6 +434,7 @@ export default function AdminUsersPage() {
                         <TableHead>Rôle</TableHead>
                         <TableHead>Département</TableHead>
                         <TableHead>Équipe</TableHead>
+                        <TableHead>Spécialités</TableHead>
                         <TableHead>Statut</TableHead>
                         <TableHead>Approbations</TableHead>
                         <TableHead>Créé le</TableHead>
@@ -437,6 +491,58 @@ export default function AdminUsersPage() {
                                 ))}
                               </SelectContent>
                             </Select>
+                          </TableCell>
+                          <TableCell>
+                            {rowUser.role === "TECHNICIAN" ? (
+                              <div className="flex flex-col gap-1">
+                                <div className="flex flex-wrap gap-1">
+                                  {rowUser.specialties.length === 0 ? (
+                                    <span className="text-xs text-muted-foreground">Aucune</span>
+                                  ) : (
+                                    rowUser.specialties.map((specialty) => (
+                                      <Badge
+                                        key={specialty.categoryId}
+                                        variant="outline"
+                                        className="cursor-pointer"
+                                        onClick={() => handleRemoveSpecialty(rowUser, specialty.categoryId)}
+                                        title="Cliquer pour retirer"
+                                      >
+                                        {specialty.category.name} ×
+                                      </Badge>
+                                    ))
+                                  )}
+                                </div>
+                                {categories.some(
+                                  (category) =>
+                                    !rowUser.specialties.some((s) => s.categoryId === category.id),
+                                ) ? (
+                                  <Select
+                                    value=""
+                                    onValueChange={(value) => value && handleAddSpecialty(rowUser, value)}
+                                  >
+                                    <SelectTrigger className="h-7 w-40 text-xs">
+                                      <SelectValue placeholder="+ Ajouter" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {categories
+                                        .filter(
+                                          (category) =>
+                                            !rowUser.specialties.some(
+                                              (s) => s.categoryId === category.id,
+                                            ),
+                                        )
+                                        .map((category) => (
+                                          <SelectItem key={category.id} value={category.id}>
+                                            {category.name}
+                                          </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                  </Select>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge variant={rowUser.isActive ? "secondary" : "destructive"}>

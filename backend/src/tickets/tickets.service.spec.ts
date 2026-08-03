@@ -22,6 +22,7 @@ describe('TicketsService', () => {
     slaPolicy: { findUnique: jest.Mock };
     team: { findMany: jest.Mock };
     user: { findMany: jest.Mock };
+    technicianSpecialty: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let notificationsService: { create: jest.Mock };
@@ -45,6 +46,10 @@ describe('TicketsService', () => {
       slaPolicy: { findUnique: jest.fn().mockResolvedValue(null) },
       team: { findMany: jest.fn().mockResolvedValue([]) },
       user: { findMany: jest.fn().mockResolvedValue([]) },
+      // Vide par défaut : les tests existants (repli équipe/généraliste)
+      // continuent de s'appliquer sans modification ; les tests de
+      // spécialité redéfinissent cette valeur explicitement.
+      technicianSpecialty: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
@@ -512,6 +517,42 @@ describe('TicketsService', () => {
         }),
       );
       expect(result).toBe(created);
+    });
+
+    // docs/06-cas-utilisation.md UC-031, docs/05-user-stories.md US-13 :
+    // un technicien avec une spécialité explicite pour la catégorie est
+    // préféré à l'équipe associée — même si l'équipe aurait suggéré
+    // quelqu'un d'autre.
+    it('prefers a technician with an explicit specialty over the matching team', async () => {
+      prisma.technicianSpecialty.findMany.mockResolvedValue([
+        {
+          user: {
+            id: 'tech-specialist',
+            displayName: 'Specialist',
+            email: 'specialist@test.com',
+          },
+        },
+      ]);
+      prisma.ticket.create.mockResolvedValue({
+        id: 'tkt-1',
+        reference: 'TCK-2026-0001',
+        technicianId: 'tech-specialist',
+      });
+
+      await service.create(dto, 'emp-1');
+
+      expect(prisma.technicianSpecialty.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ categoryId: 'cat-1' }),
+        }),
+      );
+      expect(prisma.team.findMany).not.toHaveBeenCalled();
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
+      expect(prisma.ticket.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ technicianId: 'tech-specialist' }),
+        }),
+      );
     });
 
     it('falls back to the least-loaded generalist when no team matches the category', async () => {

@@ -47,6 +47,7 @@ model User {
   knowledgeDocumentsOwned   KnowledgeDocument[] @relation("KnowledgeDocumentOwner")
   knowledgeDocumentsUploaded KnowledgeDocument[] @relation("KnowledgeDocumentUploader")
   autoResolutionsRequested  AutoResolution[]
+  specialties               TechnicianSpecialty[]
 
   @@map("users")
 }
@@ -209,6 +210,7 @@ model TicketCategory {
 
   tickets Ticket[]
   teams   Team[]
+  technicianSpecialties TechnicianSpecialty[]
 
   @@map("ticket_categories")
 }
@@ -723,4 +725,22 @@ model DocumentChunk {
   @@index([knowledgeLevel])
   @@index([ownerId])
   @@map("document_chunks")
+}
+
+// docs/06-cas-utilisation.md UC-031 étape 3, docs/05-user-stories.md US-13,
+// docs/11-documentation-api.md §3 (PATCH /users/:id/specialties) : un
+// technicien peut avoir plusieurs spécialités (réseau, matériel, logiciel,
+// accès — les mêmes catégories que TicketCategory), indépendamment de son
+// équipe (Team.categoryId, qui reste un repli — voir
+// TicketsService.findLeastLoadedTechnician).
+model TechnicianSpecialty {
+  id         String         @id @default(uuid())
+  userId     String         @map("user_id")
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String         @map("category_id")
+  category   TicketCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  @@unique([userId, categoryId])
+  @@map("technician_specialties")
 }
