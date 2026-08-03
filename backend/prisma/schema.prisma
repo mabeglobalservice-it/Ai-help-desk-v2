@@ -584,6 +584,7 @@ enum AiAgentName {
   SUPERVISOR
   INVENTORY
   HELPDESK
+  TECHNICIAN
 }
 
 // docs/11-documentation-api.md §6 (GET /ai/providers, PATCH

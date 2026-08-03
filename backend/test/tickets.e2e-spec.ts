@@ -130,6 +130,13 @@ describe('Tickets (e2e)', () => {
 
   afterAll(async () => {
     const userEmails = [employeeEmail, assignedTechEmail, otherTechEmail];
+    // docs/09-architecture-agents-ia.md §3.3 : POST /tickets/:id/assist
+    // persiste une AiConversation par appel (user_id est RESTRICT) — à
+    // supprimer avant les utilisateurs, comme pour toute AiConversation de
+    // test (voir la même leçon dans diagnostics.e2e-spec.ts).
+    await prisma.aiConversation.deleteMany({
+      where: { user: { email: { in: userEmails } } },
+    });
     await prisma.ticketStatusHistory.deleteMany({
       where: { ticket: { employeeId } },
     });
@@ -339,5 +346,51 @@ describe('Tickets (e2e)', () => {
       .expect(201);
 
     expect(res.body.rating).toBe(5);
+  });
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien).
+  describe('POST /tickets/:id/assist (Agent Technicien)', () => {
+    it('rejects an employee (réservé au rôle TECHNICIAN)', async () => {
+      await request(app.getHttpServer())
+        .post(`/tickets/${ticketId}/assist`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ question: "Comment relancer le spouleur d'impression ?" })
+        .expect(403);
+    });
+
+    it('rejects a technician who is not assigned to the ticket (RM-04)', async () => {
+      await request(app.getHttpServer())
+        .post(`/tickets/${ticketId}/assist`)
+        .set('Authorization', `Bearer ${otherTechToken}`)
+        .send({ question: "Comment relancer le spouleur d'impression ?" })
+        .expect(403);
+    });
+
+    // Timeout raised: exercises the real Anthropic API call (Agent
+    // Technicien) — slower than Jest's 5s default, same as other e2e
+    // files that trigger a real AI call.
+    it('gives the assigned technician an explanation, never executing anything', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/tickets/${ticketId}/assist`)
+        .set('Authorization', `Bearer ${assignedTechToken}`)
+        .send({ question: "Comment relancer le spouleur d'impression ?" })
+        .expect(201);
+
+      expect(typeof res.body.explanation).toBe('string');
+      expect(res.body.explanation.length).toBeGreaterThan(0);
+      expect(res.body.conversationId).toEqual(expect.any(String));
+
+      // docs/09 §2 point 6 : chaque appel doit être journalisé — vérifie que
+      // le technicien peut relire sa propre conversation via l'endpoint déjà
+      // existant (DiagnosticsService.getConversation n'est pas restreint par
+      // rôle, seulement par propriété de la conversation).
+      const conversation = await request(app.getHttpServer())
+        .get(`/diagnostics/${res.body.conversationId}`)
+        .set('Authorization', `Bearer ${assignedTechToken}`)
+        .expect(200);
+
+      const roles = conversation.body.messages.map((m: any) => m.role);
+      expect(roles).toEqual(['USER', 'AGENT']);
+    }, 30000);
   });
 });

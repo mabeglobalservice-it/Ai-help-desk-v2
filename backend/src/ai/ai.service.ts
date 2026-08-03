@@ -209,6 +209,42 @@ const DEGRADED_SUGGESTED_STEPS = [
     "qu'un technicien prenne le relais.",
 ];
 
+// docs/09-architecture-agents-ia.md §3.3 (Agent Technicien) : assiste
+// uniquement les techniciens — explique une panne, une commande ou un
+// script à partir du contexte du ticket, de l'historique CMDB de l'actif
+// concerné et d'extraits de la base documentaire. Contrairement à l'Agent
+// Automation, il ne possède aucune capacité d'exécution : un script
+// suggéré n'est qu'indicatif, toute exécution réelle doit transiter par le
+// module Automation (avec approbation si l'action est sensible, RM-01).
+export interface TechnicianAssistContext {
+  ticketTitle: string;
+  ticketSummary: string | null;
+  categoryName: string;
+  ciHistory: string | null;
+  knowledgeExcerpts: string[];
+}
+
+export interface TechnicianAssistResult {
+  explanation: string;
+  suggestedScript: string | null;
+  degraded: boolean;
+  conversationId: string;
+}
+
+interface TechnicianAssistEvaluation {
+  explanation: string;
+  suggestedScript?: string | null;
+}
+
+const TECHNICIAN_ASSIST_SYSTEM_PROMPT =
+  "Tu es l'Agent Technicien d'un service d'assistance informatique interne. Tu assistes exclusivement des " +
+  'techniciens de support, jamais des employés directement. Ton rôle : expliquer une panne, une commande, ' +
+  "un script ou une meilleure pratique, en t'appuyant sur le contexte du ticket fourni, l'historique CMDB " +
+  "de l'actif concerné et les extraits de documentation fournis. Tu peux suggérer un script ou une commande " +
+  "à titre indicatif, mais tu ne l'exécutes jamais toi-même : le technicien reste seul décisionnaire de le " +
+  "faire passer par le module d'automatisation, avec approbation si l'action est sensible. Ne fabrique " +
+  "jamais de détails sur l'environnement technique de l'organisation que tu ne connais pas.";
+
 // docs/06-cas-utilisation.md RM-05: keyword synonyms for the local fallback
 // diagnosis used when the AI provider is unavailable, keyed by normalized
 // (lowercased, accent-stripped) category name — degrades sensibly even if
@@ -986,6 +1022,196 @@ export class AiService {
 
     return {
       evaluation: toolUse.input as ConversationTurnEvaluation,
+      usage: response.usage,
+    };
+  }
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien) : appelé par
+  // TicketsService.assistTechnician après vérification RM-04 (technicien
+  // assigné au ticket). RM-05 : indisponibilité/erreur/agent désactivé →
+  // repli textuel générique, sans jamais halluciner de script (contrairement
+  // aux autres agents, le repli dégradé ici ne peut pas proposer de
+  // suggestedScript — un script fabriqué localement serait dangereux à
+  // exécuter sans validation IA réelle).
+  async assistTechnician(
+    technicianId: string,
+    question: string,
+    context: TechnicianAssistContext,
+  ): Promise<TechnicianAssistResult> {
+    const conversation = await this.prisma.aiConversation.create({
+      data: {
+        userId: technicianId,
+        provider: AiProviderName.CLAUDE,
+        model: MODEL,
+      },
+    });
+    await this.prisma.aiMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: AiMessageRole.USER,
+        content: question,
+      },
+    });
+
+    const { enabled, agentId } = await this.checkAgentStatus(
+      AiAgentName.TECHNICIAN,
+    );
+
+    if (!this.client || !enabled) {
+      this.logger.warn(
+        'Agent Technicien indisponible (clé API absente, agent ou fournisseur désactivé) : repli en mode dégradé',
+      );
+      return this.degradeTechnicianAssist(conversation.id, agentId);
+    }
+
+    try {
+      const startedAt = Date.now();
+      const { evaluation, usage } = await this.aiAssistTechnician(
+        this.client,
+        question,
+        context,
+      );
+      const responseTimeMs = Date.now() - startedAt;
+      const tokenCost = this.computeTokenCost(usage);
+
+      const result: TechnicianAssistResult = {
+        explanation:
+          evaluation.explanation?.trim() ||
+          "Aucune explication n'a pu être générée.",
+        suggestedScript: evaluation.suggestedScript?.trim() || null,
+        degraded: false,
+        conversationId: conversation.id,
+      };
+      await this.recordTechnicianAssistMessage(
+        conversation.id,
+        agentId,
+        result,
+        responseTimeMs,
+        tokenCost,
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(
+        "Échec de l'Agent Technicien, repli en mode dégradé",
+        error,
+      );
+      return this.degradeTechnicianAssist(conversation.id, agentId);
+    }
+  }
+
+  private async degradeTechnicianAssist(
+    conversationId: string,
+    agentId: string | null,
+  ): Promise<TechnicianAssistResult> {
+    const result: TechnicianAssistResult = {
+      explanation:
+        "L'IA n'est pas disponible pour le moment : consultez la base de " +
+        "connaissances ou la documentation du fabricant avant d'intervenir.",
+      suggestedScript: null,
+      degraded: true,
+      conversationId,
+    };
+    await this.recordTechnicianAssistMessage(
+      conversationId,
+      agentId,
+      result,
+      null,
+      null,
+    );
+    return result;
+  }
+
+  private async recordTechnicianAssistMessage(
+    conversationId: string,
+    agentId: string | null,
+    result: TechnicianAssistResult,
+    responseTimeMs: number | null,
+    tokenCost: number | null,
+  ): Promise<void> {
+    await this.prisma.aiMessage.create({
+      data: {
+        conversationId,
+        agentId: agentId ?? undefined,
+        role: AiMessageRole.AGENT,
+        content:
+          result.explanation +
+          (result.suggestedScript
+            ? `\n\nScript suggéré (non exécuté) :\n${result.suggestedScript}`
+            : '') +
+          (result.degraded ? ' (mode dégradé)' : ''),
+        responseTimeMs: responseTimeMs ?? undefined,
+        tokenCost: tokenCost ?? undefined,
+      },
+    });
+  }
+
+  private async aiAssistTechnician(
+    client: Anthropic,
+    question: string,
+    context: TechnicianAssistContext,
+  ): Promise<{
+    evaluation: TechnicianAssistEvaluation;
+    usage: Anthropic.Usage;
+  }> {
+    const system =
+      TECHNICIAN_ASSIST_SYSTEM_PROMPT +
+      `\n\nTicket concerné : ${context.ticketTitle} (catégorie : ${context.categoryName})` +
+      (context.ticketSummary
+        ? `\nDescription : ${context.ticketSummary}`
+        : '') +
+      (context.ciHistory
+        ? `\n\nHistorique CMDB de l'actif concerné :\n${context.ciHistory}`
+        : '') +
+      (context.knowledgeExcerpts.length > 0
+        ? '\n\nExtraits de documentation pertinents :\n' +
+          context.knowledgeExcerpts
+            .map((excerpt, i) => `${i + 1}. ${excerpt}`)
+            .join('\n')
+        : '');
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 768,
+      system,
+      messages: [{ role: 'user', content: question }],
+      tools: [
+        {
+          name: 'assist_technician',
+          description:
+            'Fournit une explication au technicien, avec un script ou une commande suggérée en option (jamais exécutée)',
+          input_schema: {
+            type: 'object',
+            properties: {
+              explanation: {
+                type: 'string',
+                description:
+                  'Explication textuelle de la panne, de la commande ou de la meilleure pratique',
+              },
+              suggestedScript: {
+                type: 'string',
+                description:
+                  'Script ou commande suggérée, à titre indicatif uniquement (optionnel)',
+              },
+            },
+            required: ['explanation'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'assist_technician' },
+    });
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+    );
+
+    if (!toolUse) {
+      throw new Error(
+        "Réponse de l'IA inattendue : aucune évaluation structurée reçue",
+      );
+    }
+
+    return {
+      evaluation: toolUse.input as TechnicianAssistEvaluation,
       usage: response.usage,
     };
   }

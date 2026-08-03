@@ -22,6 +22,7 @@ import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { FindTicketsQueryDto } from './dto/find-tickets-query.dto';
 import { RateTicketDto } from './dto/rate-ticket.dto';
+import { TechnicianAssistDto } from './dto/technician-assist.dto';
 import { AiDiagnoseDto } from '../ai/dto/ai-diagnose.dto';
 
 @ApiTags('tickets')
@@ -111,6 +112,27 @@ export class TicketsController {
   @Post(':id/suggest-technician')
   suggestTechnician(@Param('id') id: string) {
     return this.ticketsService.suggestTechnician(id);
+  }
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien) : reserve au
+  // technicien assigne a ce ticket (RM-04) — chaque appel declenche une
+  // requete reelle a l'API Anthropic, meme limite de debit que les autres
+  // endpoints IA.
+  @ApiOperation({
+    summary: "Demande une explication à l'Agent Technicien",
+    description:
+      "Explique une panne, une commande ou un script à partir du contexte du ticket et de l'historique CMDB de l'actif concerné ; peut suggérer un script à titre indicatif, jamais exécuté. Réservé au technicien assigné à ce ticket",
+  })
+  @Roles(Role.TECHNICIAN)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post(':id/assist')
+  assistTechnician(
+    @Param('id') id: string,
+    @Body() dto: TechnicianAssistDto,
+    @Req() req: Request,
+  ) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.ticketsService.assistTechnician(id, requester, dto.question);
   }
 
   // Covers status change + reassignment (docs: Technicien assigne, Superviseur)

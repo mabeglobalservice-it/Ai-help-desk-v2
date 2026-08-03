@@ -7,6 +7,7 @@ import { Star } from "lucide-react";
 import {
   ApiError,
   ATTACHMENT_ACCEPT,
+  assistTechnician,
   createComment,
   downloadAttachment,
   getAttachments,
@@ -26,6 +27,7 @@ import {
   type AutomationRun,
   type Priority,
   type Script,
+  type TechnicianAssistResult,
   type TicketAttachment,
   type TicketCategory,
   type TicketComment,
@@ -150,6 +152,12 @@ export default function TicketDetailPage() {
   const [automationSuggestionInfo, setAutomationSuggestionInfo] = useState<string | null>(null);
   const [automationSuggestError, setAutomationSuggestError] = useState<string | null>(null);
   const [isSuggestingAutomation, setIsSuggestingAutomation] = useState(false);
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien)
+  const [technicianQuestion, setTechnicianQuestion] = useState("");
+  const [isAskingAssistant, setIsAskingAssistant] = useState(false);
+  const [assistantError, setAssistantError] = useState<string | null>(null);
+  const [assistantResult, setAssistantResult] = useState<TechnicianAssistResult | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -285,6 +293,31 @@ export default function TicketDetailPage() {
       }
     } finally {
       setIsSuggestingAutomation(false);
+    }
+  }
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien) : explication
+  // textuelle et, le cas échéant, un script suggéré à titre indicatif — ne
+  // déclenche jamais d'exécution (voir la section Automatisation pour ça).
+  async function handleAskAssistant() {
+    const token = getToken();
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    if (!technicianQuestion.trim()) return;
+
+    setAssistantError(null);
+    setIsAskingAssistant(true);
+    try {
+      const result = await assistTechnician(token, params.id, technicianQuestion.trim());
+      setAssistantResult(result);
+    } catch (err) {
+      setAssistantError(
+        err instanceof ApiError ? err.message : "Impossible de contacter l'assistant pour le moment.",
+      );
+    } finally {
+      setIsAskingAssistant(false);
     }
   }
 
@@ -1017,6 +1050,64 @@ export default function TicketDetailPage() {
                             : `Statut : ${lastRunResult.status}`}
                       </AlertDescription>
                     </Alert>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {isTechnician ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Assistant Technicien</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    docs/09 §3.3 : explique une panne, une commande ou un script à partir du contexte
+                    de ce ticket — un script suggéré n&apos;est jamais exécuté ici, seulement indicatif.
+                  </p>
+                  <div className="flex gap-2">
+                    <Textarea
+                      value={technicianQuestion}
+                      onChange={(event) => setTechnicianQuestion(event.target.value)}
+                      placeholder="Ex. Comment vider le cache DNS avant de réinstaller le pilote réseau ?"
+                      rows={2}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleAskAssistant}
+                    disabled={isAskingAssistant || !technicianQuestion.trim()}
+                  >
+                    {isAskingAssistant ? "Analyse en cours..." : "Demander à l'assistant"}
+                  </Button>
+                  {assistantError ? (
+                    <Alert variant="destructive">
+                      <AlertDescription>{assistantError}</AlertDescription>
+                    </Alert>
+                  ) : null}
+                  {assistantResult ? (
+                    <div className="space-y-2 rounded-md border p-3">
+                      <p className="text-sm whitespace-pre-wrap">{assistantResult.explanation}</p>
+                      {assistantResult.suggestedScript ? (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium">
+                            Script suggéré (non exécuté) :
+                          </p>
+                          <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">
+                            {assistantResult.suggestedScript}
+                          </pre>
+                        </div>
+                      ) : null}
+                      {assistantResult.degraded ? (
+                        <Alert>
+                          <AlertDescription>
+                            L&apos;IA n&apos;est pas disponible pour le moment : réponse générique en
+                            mode dégradé.
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
+                    </div>
                   ) : null}
                 </CardContent>
               </Card>

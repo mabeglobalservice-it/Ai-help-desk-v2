@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { AiService } from '../ai/ai.service';
 import { Prisma, Role, TicketStatus } from '../../generated/prisma/client';
 
 describe('TicketsService', () => {
@@ -23,6 +24,7 @@ describe('TicketsService', () => {
     team: { findMany: jest.Mock };
     user: { findMany: jest.Mock };
     technicianSpecialty: { findMany: jest.Mock };
+    automationRun: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let notificationsService: { create: jest.Mock };
@@ -30,7 +32,9 @@ describe('TicketsService', () => {
   let knowledgeService: {
     proposeArticleFromTicket: jest.Mock;
     indexResolvedTicket: jest.Mock;
+    search: jest.Mock;
   };
+  let aiService: { assistTechnician: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -50,6 +54,7 @@ describe('TicketsService', () => {
       // continuent de s'appliquer sans modification ; les tests de
       // spécialité redéfinissent cette valeur explicitement.
       technicianSpecialty: { findMany: jest.fn().mockResolvedValue([]) },
+      automationRun: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
     };
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
@@ -57,7 +62,9 @@ describe('TicketsService', () => {
     knowledgeService = {
       proposeArticleFromTicket: jest.fn().mockResolvedValue(null),
       indexResolvedTicket: jest.fn().mockResolvedValue(undefined),
+      search: jest.fn().mockResolvedValue([]),
     };
+    aiService = { assistTechnician: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -66,6 +73,7 @@ describe('TicketsService', () => {
         { provide: NotificationsService, useValue: notificationsService },
         { provide: RealtimeGateway, useValue: realtimeGateway },
         { provide: KnowledgeService, useValue: knowledgeService },
+        { provide: AiService, useValue: aiService },
       ],
     }).compile();
 
@@ -685,6 +693,155 @@ describe('TicketsService', () => {
       const result = await service.suggestTechnician('tkt-1');
 
       expect(result.id).toBe('tech-a');
+    });
+  });
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien).
+  describe('assistTechnician', () => {
+    const baseTicket = {
+      id: 'tkt-1',
+      employeeId: 'emp-1',
+      technicianId: 'tech-1',
+      title: 'Imprimante bloquée',
+      summary: 'La file d’attente ne se vide plus',
+      category: { name: 'Matériel' },
+      ciId: null as string | null,
+      statusHistory: [],
+    };
+
+    it('rejects a technician who is not assigned to the ticket (RM-04)', async () => {
+      prisma.ticket.findUnique.mockResolvedValue(baseTicket);
+
+      await expect(
+        service.assistTechnician(
+          'tkt-1',
+          { userId: 'tech-2', role: Role.TECHNICIAN },
+          'Comment relancer le spouleur ?',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(aiService.assistTechnician).not.toHaveBeenCalled();
+    });
+
+    it('delegates to AiService with the ticket context when the CI has no history', async () => {
+      prisma.ticket.findUnique.mockResolvedValue(baseTicket);
+      knowledgeService.search.mockResolvedValue([]);
+      aiService.assistTechnician.mockResolvedValue({
+        explanation: 'Redémarrez le service de spouleur.',
+        suggestedScript: null,
+        degraded: false,
+        conversationId: 'conv-1',
+      });
+
+      const result = await service.assistTechnician(
+        'tkt-1',
+        { userId: 'tech-1', role: Role.TECHNICIAN },
+        'Comment relancer le spouleur ?',
+      );
+
+      expect(aiService.assistTechnician).toHaveBeenCalledWith(
+        'tech-1',
+        'Comment relancer le spouleur ?',
+        {
+          ticketTitle: 'Imprimante bloquée',
+          ticketSummary: 'La file d’attente ne se vide plus',
+          categoryName: 'Matériel',
+          ciHistory: null,
+          knowledgeExcerpts: [],
+        },
+      );
+      expect(result.conversationId).toBe('conv-1');
+    });
+
+    it('builds a CI history summary from past tickets and automation runs when the ticket has a CI', async () => {
+      prisma.ticket.findUnique.mockResolvedValueOnce({
+        ...baseTicket,
+        ciId: 'ci-1',
+      });
+      // buildCiHistory issues its own prisma.ticket.findMany call for the
+      // CI's past tickets, separate from the findOne findUnique above.
+      prisma.ticket.findMany.mockResolvedValue([
+        {
+          reference: 'TCK-2026-0001',
+          title: 'Panne réseau',
+          status: TicketStatus.RESOLVED,
+          createdAt: new Date(),
+        },
+      ]);
+      prisma.automationRun.findMany.mockResolvedValue([
+        {
+          script: { name: 'Vider le cache DNS' },
+          status: 'SUCCESS',
+          createdAt: new Date(),
+        },
+      ]);
+      knowledgeService.search.mockResolvedValue([]);
+      aiService.assistTechnician.mockResolvedValue({
+        explanation: 'Explication',
+        suggestedScript: null,
+        degraded: false,
+        conversationId: 'conv-2',
+      });
+
+      await service.assistTechnician(
+        'tkt-1',
+        { userId: 'tech-1', role: Role.TECHNICIAN },
+        'Une idée de la cause ?',
+      );
+
+      const [, , context] = aiService.assistTechnician.mock.calls[0];
+      expect(context.ciHistory).toContain('TCK-2026-0001');
+      expect(context.ciHistory).toContain('Panne réseau');
+      expect(context.ciHistory).toContain('Vider le cache DNS');
+    });
+
+    it('passes the top 3 knowledge search results as excerpts', async () => {
+      prisma.ticket.findUnique.mockResolvedValue(baseTicket);
+      knowledgeService.search.mockResolvedValue([
+        { title: 'Article A', snippet: 'Extrait A' },
+        { title: 'Article B', snippet: 'Extrait B' },
+        { title: 'Article C', snippet: 'Extrait C' },
+        { title: 'Article D', snippet: 'Extrait D' },
+      ]);
+      aiService.assistTechnician.mockResolvedValue({
+        explanation: 'Explication',
+        suggestedScript: null,
+        degraded: false,
+        conversationId: 'conv-3',
+      });
+
+      await service.assistTechnician(
+        'tkt-1',
+        { userId: 'tech-1', role: Role.TECHNICIAN },
+        'Question',
+      );
+
+      const [, , context] = aiService.assistTechnician.mock.calls[0];
+      expect(context.knowledgeExcerpts).toEqual([
+        'Article A — Extrait A',
+        'Article B — Extrait B',
+        'Article C — Extrait C',
+      ]);
+    });
+
+    it('falls back to no knowledge excerpts when the search fails', async () => {
+      prisma.ticket.findUnique.mockResolvedValue(baseTicket);
+      knowledgeService.search.mockRejectedValue(new Error('search down'));
+      aiService.assistTechnician.mockResolvedValue({
+        explanation: 'Explication',
+        suggestedScript: null,
+        degraded: false,
+        conversationId: 'conv-4',
+      });
+
+      const result = await service.assistTechnician(
+        'tkt-1',
+        { userId: 'tech-1', role: Role.TECHNICIAN },
+        'Question',
+      );
+
+      expect(result.conversationId).toBe('conv-4');
+      const [, , context] = aiService.assistTechnician.mock.calls[0];
+      expect(context.knowledgeExcerpts).toEqual([]);
     });
   });
 });

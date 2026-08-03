@@ -414,4 +414,75 @@ describe('AiService', () => {
       });
     });
   });
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien). Like
+  // converseDiagnostic, the real-Claude tool-use path is covered by e2e
+  // tests against the real Anthropic API; these unit tests exercise the
+  // degraded-mode path (no API key), which — unlike every other agent in
+  // this file — must never fabricate a suggestedScript.
+  describe('assistTechnician', () => {
+    const context = {
+      ticketTitle: 'Imprimante bloquée',
+      ticketSummary: 'La file ne se vide plus',
+      categoryName: 'Matériel',
+      ciHistory: null,
+      knowledgeExcerpts: [] as string[],
+    };
+
+    it('falls back to a generic, script-free explanation when no API key is configured', async () => {
+      const result = await service.assistTechnician(
+        'tech-1',
+        'Comment relancer le spouleur ?',
+        context,
+      );
+
+      expect(result.degraded).toBe(true);
+      expect(result.suggestedScript).toBeNull();
+      expect(result.explanation.length).toBeGreaterThan(0);
+      expect(result.conversationId).toBe('conv-1');
+      expect(prisma.aiConversation.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'tech-1',
+          provider: 'CLAUDE',
+          model: 'claude-sonnet-5',
+        },
+      });
+    });
+
+    it('falls back to the degraded explanation when the Technician agent is disabled, even with an API key configured', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+      prisma.aiAgent.findUnique.mockResolvedValue({ isActive: false });
+      prisma.aiProviderConfig.findUnique.mockResolvedValue({ isActive: true });
+      service = await buildService();
+
+      const result = await service.assistTechnician(
+        'tech-1',
+        'Comment relancer le spouleur ?',
+        context,
+      );
+
+      expect(result.degraded).toBe(true);
+      expect(result.suggestedScript).toBeNull();
+      expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
+        where: { name: 'TECHNICIAN' },
+      });
+    });
+
+    it('records the degraded response as an AGENT message on the conversation', async () => {
+      await service.assistTechnician(
+        'tech-1',
+        'Comment relancer le spouleur ?',
+        context,
+      );
+
+      expect(prisma.aiMessage.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            conversationId: 'conv-1',
+            role: 'AGENT',
+          }) as unknown,
+        }),
+      );
+    });
+  });
 });

@@ -8,8 +8,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { KnowledgeService } from '../knowledge/knowledge.service';
+import { AiService } from '../ai/ai.service';
 import {
   AiConversationStatus,
+  AutomationRunStatus,
   NotificationType,
   Prisma,
   Role,
@@ -42,6 +44,14 @@ const STATUS_LABELS: Record<TicketStatus, string> = {
   ESCALATED: 'Escaladé',
 };
 
+const AUTOMATION_STATUS_LABELS: Record<AutomationRunStatus, string> = {
+  PENDING_APPROVAL: "en attente d'approbation",
+  RUNNING: 'en cours',
+  SUCCESS: 'réussie',
+  FAILED: 'échouée',
+  REJECTED: 'rejetée',
+};
+
 const OPEN_STATUSES = [
   TicketStatus.NEW,
   TicketStatus.IN_PROGRESS,
@@ -60,6 +70,7 @@ export class TicketsService {
     private readonly notificationsService: NotificationsService,
     private readonly realtimeGateway: RealtimeGateway,
     private readonly knowledgeService: KnowledgeService,
+    private readonly aiService: AiService,
   ) {}
 
   private async generateReference(): Promise<string> {
@@ -256,6 +267,81 @@ export class TicketsService {
     }
 
     return candidate;
+  }
+
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien) : reserve au
+  // technicien assigne au ticket (RM-04, verifie via findOne(id, requester)
+  // qui leve NotFound/Forbidden sinon). Enrichit le contexte avec
+  // l'historique CMDB de l'actif concerne et des extraits pertinents de la
+  // base documentaire (Agent Documentation), avant de deleguer a l'Agent
+  // Technicien (AiService.assistTechnician) — qui ne genere qu'une
+  // explication et, le cas echeant, un script suggere : aucune execution
+  // reelle n'a lieu ici (voir module Automation pour ca, avec approbation
+  // si l'action est sensible).
+  async assistTechnician(id: string, requester: Requester, question: string) {
+    const ticket = await this.findOne(id, requester);
+
+    const [ciHistory, knowledgeResults] = await Promise.all([
+      ticket.ciId ? this.buildCiHistory(ticket.ciId) : Promise.resolve(null),
+      this.knowledgeService.search(question, requester).catch(() => []),
+    ]);
+
+    return this.aiService.assistTechnician(requester.userId, question, {
+      ticketTitle: ticket.title,
+      ticketSummary: ticket.summary,
+      categoryName: ticket.category.name,
+      ciHistory,
+      knowledgeExcerpts: knowledgeResults
+        .slice(0, 3)
+        .map((result) => `${result.title} — ${result.snippet}`),
+    });
+  }
+
+  private async buildCiHistory(ciId: string): Promise<string | null> {
+    const [pastTickets, automationRuns] = await Promise.all([
+      this.prisma.ticket.findMany({
+        where: { ciId },
+        select: {
+          reference: true,
+          title: true,
+          status: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      }),
+      this.prisma.automationRun.findMany({
+        where: { ciId },
+        select: {
+          script: { select: { name: true } },
+          status: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      }),
+    ]);
+
+    if (pastTickets.length === 0 && automationRuns.length === 0) return null;
+
+    const lines: string[] = [];
+    if (pastTickets.length > 0) {
+      lines.push('Tickets précédents sur cet actif :');
+      lines.push(
+        ...pastTickets.map(
+          (t) => `- ${t.reference} : ${t.title} (${STATUS_LABELS[t.status]})`,
+        ),
+      );
+    }
+    if (automationRuns.length > 0) {
+      lines.push('Automatisations déjà exécutées sur cet actif :');
+      lines.push(
+        ...automationRuns.map(
+          (r) => `- ${r.script.name} (${AUTOMATION_STATUS_LABELS[r.status]})`,
+        ),
+      );
+    }
+    return lines.join('\n');
   }
 
   // docs/06-cas-utilisation.md UC-001 cas d'erreur, UC-031 étape 3,

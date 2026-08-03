@@ -59,6 +59,11 @@ const aiAgents = [
     description:
       "Dialogue conversationnel avec l'employé (docs/09 §3.2) : pose des questions de clarification, propose une cause probable et des étapes de résolution avant la création d'un ticket.",
   },
+  {
+    name: 'TECHNICIAN',
+    description:
+      "Assiste uniquement les techniciens (docs/09 §3.3) : explique une panne, une commande ou un script à partir du contexte du ticket, de l'historique CMDB de l'actif et de la base documentaire — suggère un script à titre indicatif, ne l'exécute jamais.",
+  },
 ] as const;
 
 // docs/11-documentation-api.md §6 : un seul fournisseur actif à la fois.

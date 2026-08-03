@@ -777,6 +777,28 @@ export function suggestTechnician(token: string, ticketId: string): Promise<Sugg
   });
 }
 
+// docs/09-architecture-agents-ia.md §3.3 (Agent Technicien) : explique une
+// panne/commande/script à partir du contexte du ticket et de l'historique
+// CMDB de l'actif concerné — suggère un script à titre indicatif, ne
+// l'exécute jamais (toute exécution réelle passe par le module Automation).
+export interface TechnicianAssistResult {
+  explanation: string;
+  suggestedScript: string | null;
+  degraded: boolean;
+  conversationId: string;
+}
+
+export function assistTechnician(
+  token: string,
+  ticketId: string,
+  question: string,
+): Promise<TechnicianAssistResult> {
+  return apiFetch<TechnicianAssistResult>(`/tickets/${ticketId}/assist`, token, {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
+}
+
 export interface TicketDiagnosis {
   title: string;
   categoryId: string;
