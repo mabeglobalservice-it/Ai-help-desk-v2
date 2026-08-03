@@ -26,7 +26,10 @@ describe('TicketsService', () => {
   };
   let notificationsService: { create: jest.Mock };
   let realtimeGateway: { emitToUser: jest.Mock; emitToRole: jest.Mock };
-  let knowledgeService: { proposeArticleFromTicket: jest.Mock };
+  let knowledgeService: {
+    proposeArticleFromTicket: jest.Mock;
+    indexResolvedTicket: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -48,6 +51,7 @@ describe('TicketsService', () => {
     realtimeGateway = { emitToUser: jest.fn(), emitToRole: jest.fn() };
     knowledgeService = {
       proposeArticleFromTicket: jest.fn().mockResolvedValue(null),
+      indexResolvedTicket: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -341,6 +345,9 @@ describe('TicketsService', () => {
       expect(knowledgeService.proposeArticleFromTicket).toHaveBeenCalledWith(
         'tkt-1',
       );
+      expect(knowledgeService.indexResolvedTicket).toHaveBeenCalledWith(
+        updated,
+      );
     });
 
     it('does not propose a knowledge article for a non-resolving status change', async () => {
@@ -355,6 +362,7 @@ describe('TicketsService', () => {
       );
 
       expect(knowledgeService.proposeArticleFromTicket).not.toHaveBeenCalled();
+      expect(knowledgeService.indexResolvedTicket).not.toHaveBeenCalled();
     });
 
     it('notifies and emits realtime event on new technician assignment', async () => {

@@ -416,6 +416,15 @@ export class TicketsService {
       } catch (error) {
         console.error('Failed to propose knowledge article', error);
       }
+
+      // docs/10-architecture-rag.md §13 niveau 3 ("tickets résolus") :
+      // indexé immédiatement, sans attendre la validation de l'article
+      // proposé ci-dessus (circuit distinct, voir KnowledgeService).
+      try {
+        await this.knowledgeService.indexResolvedTicket(updated);
+      } catch (error) {
+        console.error('Failed to index resolved ticket for RAG search', error);
+      }
     }
 
     return updated;

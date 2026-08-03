@@ -513,15 +513,18 @@ export function getLicenses(token: string): Promise<LicenseListEntry[]> {
   return apiFetch<LicenseListEntry[]>("/configuration-items/licenses", token);
 }
 
+// docs/10-architecture-rag.md §13 ("RAG multi-niveaux") : 1=public, 2=interne,
+// 3=tickets résolus, 4=automatisation, 5=personnel.
 export interface KnowledgeSearchResult {
   id: string;
-  reference: string;
+  reference: string | null;
   title: string;
   summary: string | null;
   resolvedAt: string | null;
-  categoryName: string;
-  priorityName: string;
-  sourceType: "TICKET" | "ARTICLE";
+  categoryName: string | null;
+  priorityName: string | null;
+  sourceType: "TICKET" | "ARTICLE" | "SCRIPT" | "DOCUMENT";
+  knowledgeLevel: number;
   rank: number;
   snippet: string;
 }
@@ -529,6 +532,49 @@ export interface KnowledgeSearchResult {
 export function searchKnowledge(token: string, q: string): Promise<KnowledgeSearchResult[]> {
   const params = new URLSearchParams({ q });
   return apiFetch<KnowledgeSearchResult[]>(`/knowledge/search?${params.toString()}`, token);
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  content: string;
+  knowledgeLevel: number;
+  ownerId: string | null;
+  uploadedById: string;
+  authorName: string | null;
+  sourceVersion: string | null;
+  language: string;
+  createdAt: string;
+}
+
+export interface CreateKnowledgeDocumentInput {
+  title: string;
+  content: string;
+  knowledgeLevel?: 1 | 2 | 4;
+  authorName?: string;
+  sourceVersion?: string;
+}
+
+// docs/11-documentation-api.md §7 : Technicien (niveau 5, personnel toujours
+// forcé côté serveur), Admin (niveaux 1, 2 ou 4).
+export function createKnowledgeDocument(
+  token: string,
+  input: CreateKnowledgeDocumentInput,
+): Promise<KnowledgeDocument> {
+  return apiFetch<KnowledgeDocument>("/knowledge/documents", token, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getKnowledgeDocument(token: string, id: string): Promise<KnowledgeDocument> {
+  return apiFetch<KnowledgeDocument>(`/knowledge/documents/${id}`, token);
+}
+
+export function deleteKnowledgeDocument(token: string, id: string): Promise<KnowledgeDocument> {
+  return apiFetch<KnowledgeDocument>(`/knowledge/documents/${id}`, token, {
+    method: "DELETE",
+  });
 }
 
 // docs/10-architecture-rag.md §11 (Agent Documentation, apprentissage

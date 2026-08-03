@@ -9,6 +9,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AiService } from '../ai/ai.service';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import {
   ActorType,
   ApprovalStatus,
@@ -45,6 +46,7 @@ export class AutomationService {
     private readonly auditLogService: AuditLogService,
     private readonly realtimeGateway: RealtimeGateway,
     private readonly aiService: AiService,
+    private readonly knowledgeService: KnowledgeService,
   ) {}
 
   findAllScripts() {
@@ -110,6 +112,16 @@ export class AutomationService {
       targetId: script.id,
       afterState: { name: script.name, isSensitive: script.isSensitive },
     });
+
+    // docs/10-architecture-rag.md §13 niveau 4 ("automatisation") : un
+    // script catalogué par un Admin devient consultable via la recherche
+    // multi-niveaux. Best-effort : un échec d'indexation ne doit jamais
+    // faire échouer la création du script elle-même.
+    try {
+      await this.knowledgeService.indexScript(script);
+    } catch (error) {
+      console.error('Failed to index automation script for RAG search', error);
+    }
 
     return script;
   }

@@ -44,6 +44,8 @@ model User {
   knowledgeArticlesApproved KnowledgeArticle[]
   aiConversations           AiConversation[]
   aiFeedbackGiven           AiFeedback[]
+  knowledgeDocumentsOwned   KnowledgeDocument[] @relation("KnowledgeDocumentOwner")
+  knowledgeDocumentsUploaded KnowledgeDocument[] @relation("KnowledgeDocumentUploader")
 
   @@map("users")
 }
@@ -618,4 +620,67 @@ model AiFeedback {
   createdAt    DateTime  @default(now()) @map("created_at")
 
   @@map("ai_feedback")
+}
+
+// docs/10-architecture-rag.md §3-8 (pipeline d'ingestion/recherche) et §13
+// ("RAG multi-niveaux") : un document telecharge (procedure interne, manuel
+// constructeur, note personnelle...) decoupe en chunks embeddes. Pas
+// d'extension pgvector disponible sur cette instance Postgres locale (Windows,
+// binaire tiers non installe) : l'embedding est stocke en Float[] simple et
+// la similarite cosinus calculee cote application (voir knowledge/rag/*) —
+// suffisant au volume attendu (le document lui-meme note que pgvector est une
+// option a reevaluer, pas a anticiper prematurement, §7).
+model KnowledgeDocument {
+  id              String   @id @default(uuid())
+  title           String
+  content         String
+  // 1=public/constructeur, 2=interne, 3=tickets resolus, 4=automatisation,
+  // 5=personnel (doc 10 §13). Seuls les niveaux 1/2/4 sont creables via cet
+  // endpoint pour un Admin, et le niveau 5 pour un Technicien (doc 11 §7) —
+  // les niveaux 2/3/4 sont aussi alimentes automatiquement (voir
+  // KnowledgeService.indexResolvedTicket/indexApprovedArticle/indexScript).
+  knowledgeLevel  Int      @map("knowledge_level")
+  ownerId         String?  @map("owner_id")
+  owner           User?    @relation("KnowledgeDocumentOwner", fields: [ownerId], references: [id])
+  uploadedById    String   @map("uploaded_by_id")
+  uploadedBy      User     @relation("KnowledgeDocumentUploader", fields: [uploadedById], references: [id])
+  authorName      String?  @map("author_name")
+  sourceVersion   String?  @map("source_version")
+  language        String   @default("fr")
+  confidenceScore Decimal? @map("confidence_score") @db.Decimal(3, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  chunks DocumentChunk[]
+
+  @@map("knowledge_documents")
+}
+
+// Unite de recherche unifiee pour les 5 niveaux du RAG (doc 10 §13) : les
+// documents televerses (documentId), mais aussi les tickets resolus
+// (ticketId), les articles de connaissance approuves (knowledgeArticleId) et
+// les scripts d'automatisation (scriptId) sont indexes ici au meme format,
+// pour que KnowledgeService.search() applique un seul pipeline de recherche
+// (embedding + filtrage par niveau/proprietaire + reranking, doc §8) quelle
+// que soit l'origine du contenu. knowledgeLevel/ownerId sont denormalises
+// depuis la source pour filtrer sans jointure a l'etape de recherche (doc
+// §10 : le filtrage par droits d'acces doit se faire "avant", pas "en
+// post-traitement").
+model DocumentChunk {
+  id                 String             @id @default(uuid())
+  documentId         String?            @map("document_id")
+  document           KnowledgeDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  ticketId           String?            @map("ticket_id")
+  knowledgeArticleId String?            @map("knowledge_article_id")
+  scriptId           String?            @map("script_id")
+  knowledgeLevel     Int                @map("knowledge_level")
+  ownerId            String?            @map("owner_id")
+  sourceLabel        String             @map("source_label")
+  content            String
+  position           Int                @default(0)
+  embedding          Float[]
+  createdAt          DateTime           @default(now()) @map("created_at")
+
+  @@index([knowledgeLevel])
+  @@index([ownerId])
+  @@map("document_chunks")
 }

@@ -10,6 +10,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AiService } from '../ai/ai.service';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import {
   ApprovalStatus,
   AutomationRunStatus,
@@ -39,6 +40,7 @@ describe('AutomationService', () => {
   let auditLogService: { record: jest.Mock };
   let realtimeGateway: { emitToUser: jest.Mock };
   let aiService: { suggestAutomationForTicket: jest.Mock };
+  let knowledgeService: { indexScript: jest.Mock };
 
   const nonSensitiveScript = {
     id: 'script-1',
@@ -84,6 +86,7 @@ describe('AutomationService', () => {
     auditLogService = { record: jest.fn().mockResolvedValue(undefined) };
     realtimeGateway = { emitToUser: jest.fn() };
     aiService = { suggestAutomationForTicket: jest.fn() };
+    knowledgeService = { indexScript: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -93,6 +96,7 @@ describe('AutomationService', () => {
         { provide: AuditLogService, useValue: auditLogService },
         { provide: RealtimeGateway, useValue: realtimeGateway },
         { provide: AiService, useValue: aiService },
+        { provide: KnowledgeService, useValue: knowledgeService },
       ],
     }).compile();
 

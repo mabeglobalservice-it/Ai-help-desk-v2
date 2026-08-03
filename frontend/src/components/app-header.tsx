@@ -11,7 +11,9 @@ import { Button } from "@/components/ui/button";
 import { NotificationsBell } from "@/components/notifications-bell";
 
 const DASHBOARD_ROLES = new Set(["SUPERVISOR", "ADMIN"]);
-const KNOWLEDGE_ROLES = new Set(["TECHNICIAN", "SUPERVISOR", "ADMIN"]);
+// docs/10-architecture-rag.md §10 : un EMPLOYEE a aussi accès à la
+// recherche (niveau 1 "public" uniquement, filtré côté serveur).
+const KNOWLEDGE_ROLES = new Set(["EMPLOYEE", "TECHNICIAN", "SUPERVISOR", "ADMIN"]);
 const APPROVAL_ROLES = new Set(["TECHNICIAN", "SUPERVISOR", "ADMIN"]);
 const ARTICLE_REVIEW_ROLES = new Set(["SUPERVISOR", "ADMIN"]);
 

@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -17,9 +19,11 @@ import { Role } from '../../generated/prisma/client';
 import { KnowledgeService } from './knowledge.service';
 import { SearchKnowledgeQueryDto } from './dto/search-knowledge-query.dto';
 import { DecideKnowledgeArticleDto } from './dto/decide-knowledge-article.dto';
+import { CreateKnowledgeDocumentDto } from './dto/create-knowledge-document.dto';
 
 // docs/11-documentation-api.md §7, docs/05-user-stories.md US-26,
-// docs/10-architecture-rag.md §11 (Agent Documentation, apprentissage continu)
+// docs/10-architecture-rag.md (RAG multi-niveaux : recherche + ingestion de
+// documents, filtrage par droits d'accès au moment de la recherche, §10)
 @ApiTags('knowledge')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -30,13 +34,49 @@ export class KnowledgeController {
 
   @ApiOperation({
     summary:
-      'Recherche plein texte dans les tickets résolus et les articles approuvés',
+      'Recherche parmi les 5 niveaux de connaissance (documents, tickets résolus, articles, scripts)',
     description:
-      'Réservé aux rôles TECHNICIAN, SUPERVISOR, ADMIN (US-26). Recherche plein texte PostgreSQL (pas de recherche sémantique par embeddings) sur le titre/résumé des tickets résolus et le titre/contenu des articles de connaissance approuvés.',
+      "Ouvert à EMPLOYEE (niveau 1 uniquement, doc 10 §10), TECHNICIAN/SUPERVISOR (niveaux 1-4 + ses propres notes niveau 5), ADMIN (tous niveaux). Recherche hybride embedding+lexicale (voir knowledge/rag), le filtrage par accès s'applique avant le calcul de pertinence.",
   })
+  @Roles(Role.EMPLOYEE, Role.TECHNICIAN, Role.SUPERVISOR, Role.ADMIN)
   @Get('search')
-  search(@Query() query: SearchKnowledgeQueryDto) {
-    return this.knowledgeService.search(query.q);
+  search(@Query() query: SearchKnowledgeQueryDto, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.knowledgeService.search(query.q, requester);
+  }
+
+  @ApiOperation({
+    summary: 'Téléverse un nouveau document pour ingestion',
+    description:
+      'Technicien (niveau 5, personnel), Admin (niveaux 1, 2 ou 4) — doc 11 §7',
+  })
+  @Roles(Role.TECHNICIAN, Role.ADMIN)
+  @Post('documents')
+  createDocument(@Body() dto: CreateKnowledgeDocumentDto, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.knowledgeService.createDocument(dto, requester);
+  }
+
+  @ApiOperation({
+    summary: "Détail d'un document indexé",
+    description: "Réservé selon le niveau d'accès (doc 10, section 10)",
+  })
+  @Roles(Role.EMPLOYEE, Role.TECHNICIAN, Role.SUPERVISOR, Role.ADMIN)
+  @Get('documents/:id')
+  getDocument(@Param('id') id: string, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.knowledgeService.getDocument(id, requester);
+  }
+
+  @ApiOperation({
+    summary: "Retire un document de l'index",
+    description: 'Propriétaire (niveau 5), Admin',
+  })
+  @Roles(Role.TECHNICIAN, Role.ADMIN)
+  @Delete('documents/:id')
+  deleteDocument(@Param('id') id: string, @Req() req: Request) {
+    const requester = req.user as { userId: string; role: Role };
+    return this.knowledgeService.deleteDocument(id, requester);
   }
 
   @ApiOperation({

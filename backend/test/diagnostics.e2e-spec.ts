@@ -129,12 +129,9 @@ describe('Diagnostics (e2e)', () => {
     await prisma.user.deleteMany({
       where: {
         id: {
-          in: [
-            ownerId,
-            otherEmployeeId,
-            technicianId,
-            supervisorId,
-          ].filter(Boolean),
+          in: [ownerId, otherEmployeeId, technicianId, supervisorId].filter(
+            Boolean,
+          ),
         },
       },
     });
@@ -162,7 +159,7 @@ describe('Diagnostics (e2e)', () => {
   }, 30000);
 
   describe('GET /diagnostics/:conversationId', () => {
-    it("returns the conversation history (user then agent message) to its owner", async () => {
+    it('returns the conversation history (user then agent message) to its owner', async () => {
       const res = await request(app.getHttpServer())
         .get(`/diagnostics/${conversationId}`)
         .set('Authorization', `Bearer ${ownerToken}`)
