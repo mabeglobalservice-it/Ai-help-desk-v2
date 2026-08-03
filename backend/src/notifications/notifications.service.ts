@@ -4,6 +4,7 @@ import { EmailService } from '../email/email.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { ChatNotificationsService } from '../chat-notifications/chat-notifications.service';
 import { NotificationType } from '../../generated/prisma/client';
+import { NOTIFICATION_TEMPLATES } from './notification-templates';
 
 interface CreateNotificationInput {
   recipientId: string;
@@ -66,6 +67,13 @@ export class NotificationsService {
       where: { recipientId: userId },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  // docs/11-documentation-api.md §10 (GET /notifications/templates) :
+  // registre statique (voir notification-templates.ts), pas une table
+  // éditable — aucun PATCH n'est documenté pour cet endpoint.
+  getTemplates() {
+    return Object.values(NOTIFICATION_TEMPLATES);
   }
 
   async markAsRead(userId: string, notificationId: string) {

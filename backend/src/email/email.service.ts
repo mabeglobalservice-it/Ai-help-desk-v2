@@ -1,17 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Resend } from 'resend';
 import { NotificationType } from '../../generated/prisma/client';
+import { NOTIFICATION_TEMPLATES } from '../notifications/notification-templates';
 
 const FROM_ADDRESS = 'onboarding@resend.dev';
-
-const SUBJECT_BY_TYPE: Record<NotificationType, string> = {
-  TICKET_ASSIGNED: 'Ticket assigné',
-  NEW_COMMENT: 'Nouveau commentaire',
-  STATUS_CHANGED: 'Statut modifié',
-  SLA_BREACHED: 'SLA dépassé',
-  APPROVAL_REQUESTED: 'Approbation requise',
-  AUTOMATION_DECIDED: 'Décision sur une demande d’automatisation',
-};
 
 interface SendNotificationEmailInput {
   to: string;
@@ -40,7 +32,7 @@ export class EmailService {
       const { error } = await this.resend.emails.send({
         from: FROM_ADDRESS,
         to: input.to,
-        subject: `AI Help Desk — ${SUBJECT_BY_TYPE[input.type]}`,
+        subject: `AI Help Desk — ${NOTIFICATION_TEMPLATES[input.type].emailSubject}`,
         html: this.buildHtml(input),
       });
 
