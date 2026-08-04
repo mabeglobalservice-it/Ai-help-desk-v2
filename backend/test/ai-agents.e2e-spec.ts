@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -24,7 +24,7 @@ describe('AiAgents (e2e)', () => {
   let adminToken: string;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -40,6 +40,7 @@ describe('AiAgents (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -89,14 +90,14 @@ describe('AiAgents (e2e)', () => {
 
   describe('GET /ai/agents', () => {
     it('rejects a non-admin', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/ai/agents')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
     });
 
     it('lists the seeded agent registry for an admin', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/ai/agents')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -117,32 +118,32 @@ describe('AiAgents (e2e)', () => {
 
   describe('PATCH /ai/agents/:id/toggle', () => {
     it('rejects a non-admin', async () => {
-      const list = await request(app.getHttpServer())
+      const list = await apiRequest(app)
         .get('/ai/agents')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       const agentId = list.body[0].id;
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch(`/ai/agents/${agentId}/toggle`)
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
     });
 
     it('flips isActive and flips it back', async () => {
-      const list = await request(app.getHttpServer())
+      const list = await apiRequest(app)
         .get('/ai/agents')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       const agent = list.body.find((a: any) => a.name === 'DIAGNOSTIC');
 
-      const toggled = await request(app.getHttpServer())
+      const toggled = await apiRequest(app)
         .patch(`/ai/agents/${agent.id}/toggle`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       expect(toggled.body.isActive).toBe(!agent.isActive);
 
-      const restored = await request(app.getHttpServer())
+      const restored = await apiRequest(app)
         .patch(`/ai/agents/${agent.id}/toggle`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -150,7 +151,7 @@ describe('AiAgents (e2e)', () => {
     });
 
     it('returns 404 for an unknown agent id', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/ai/agents/00000000-0000-0000-0000-000000000000/toggle')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(404);
@@ -161,18 +162,18 @@ describe('AiAgents (e2e)', () => {
     afterAll(async () => {
       // Restore CLAUDE as the active provider so it doesn't leak into
       // other e2e files that exercise the real AI diagnosis path.
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/ai/providers/active')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ provider: 'CLAUDE' });
     });
 
     it('rejects a non-admin on both routes', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/ai/providers')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/ai/providers/active')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({ provider: 'OPENAI' })
@@ -180,7 +181,7 @@ describe('AiAgents (e2e)', () => {
     });
 
     it('lists the seeded providers with exactly one active', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/ai/providers')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -193,13 +194,13 @@ describe('AiAgents (e2e)', () => {
     });
 
     it('switches the active provider, deactivating the previous one', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/ai/providers/active')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ provider: 'OPENAI' })
         .expect(200);
 
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/ai/providers')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -213,7 +214,7 @@ describe('AiAgents (e2e)', () => {
     });
 
     it('rejects an unknown provider value', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/ai/providers/active')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ provider: 'CHATGPT' })

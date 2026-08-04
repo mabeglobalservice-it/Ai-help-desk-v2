@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -36,7 +36,7 @@ describe('ConfigurationItems (e2e)', () => {
   let technicianToken: string;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -52,6 +52,7 @@ describe('ConfigurationItems (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -172,7 +173,7 @@ describe('ConfigurationItems (e2e)', () => {
   });
 
   it('rejects CI creation from an EMPLOYEE', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/configuration-items')
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({ ciTypeId, name: 'SRV-E2E-01', inventoryNumber: 'INV-E2E-0001' })
@@ -180,7 +181,7 @@ describe('ConfigurationItems (e2e)', () => {
   });
 
   it('lets a SUPERVISOR create a Configuration Item', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/configuration-items')
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ ciTypeId, name: 'SRV-E2E-01', inventoryNumber: 'INV-E2E-0001' })
@@ -192,7 +193,7 @@ describe('ConfigurationItems (e2e)', () => {
   });
 
   it('rejects a second CI with the same inventory number', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/configuration-items')
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ ciTypeId, name: 'SRV-E2E-02', inventoryNumber: 'INV-E2E-0001' })
@@ -200,7 +201,7 @@ describe('ConfigurationItems (e2e)', () => {
   });
 
   it('allows an EMPLOYEE to list Configuration Items (needed to pick one when creating a ticket)', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/configuration-items')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
@@ -211,7 +212,7 @@ describe('ConfigurationItems (e2e)', () => {
   let ticketId: string;
 
   it('links a ticket to the Configuration Item on creation', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/tickets')
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
@@ -228,7 +229,7 @@ describe('ConfigurationItems (e2e)', () => {
   });
 
   it("shows the linked ticket in the Configuration Item's detail (impact assessment)", async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get(`/configuration-items/${ciId}`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .expect(200);
@@ -237,7 +238,7 @@ describe('ConfigurationItems (e2e)', () => {
   });
 
   it('lets a SUPERVISOR update the CI status and audit-logs the change', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .patch(`/configuration-items/${ciId}`)
       .set('Authorization', `Bearer ${supervisorToken}`)
       .send({ status: 'IN_REPAIR' })
@@ -255,7 +256,7 @@ describe('ConfigurationItems (e2e)', () => {
   // d'un CI avant de décider réparer vs remplacer (docs/08 §4.3).
   describe('manufacturer, model and warranty', () => {
     it('rejects a model without a manufacturer', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/configuration-items')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -268,7 +269,7 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('creates a CI with manufacturer, model and warranty in one call', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/configuration-items')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -294,7 +295,7 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('reuses the same manufacturer instead of duplicating it by name', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/configuration-items')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -310,7 +311,7 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('lets a TECHNICIAN view the warranty to decide repair vs replace', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get(`/configuration-items/${warrantyCiId}`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
@@ -319,13 +320,13 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('updates the existing warranty in place rather than creating a new one', async () => {
-      const before = await request(app.getHttpServer())
+      const before = await apiRequest(app)
         .get(`/configuration-items/${warrantyCiId}`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
       const warrantyId = before.body.warranty.id;
 
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .patch(`/configuration-items/${warrantyCiId}`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -342,7 +343,7 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('clears the warranty when clearWarranty is sent', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .patch(`/configuration-items/${warrantyCiId}`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ clearWarranty: true })
@@ -356,7 +357,7 @@ describe('ConfigurationItems (e2e)', () => {
   // anticiper les remplacements (docs/09 §3.6, Agent Manager).
   describe('model reliability', () => {
     it('rejects model reliability for an EMPLOYEE', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/configuration-items/models/reliability')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
@@ -364,7 +365,7 @@ describe('ConfigurationItems (e2e)', () => {
 
     it('flags a model with a high recent ticket-per-CI ratio as at-risk', async () => {
       for (let i = 1; i <= 3; i += 1) {
-        const ci = await request(app.getHttpServer())
+        const ci = await apiRequest(app)
           .post('/configuration-items')
           .set('Authorization', `Bearer ${supervisorToken}`)
           .send({
@@ -377,7 +378,7 @@ describe('ConfigurationItems (e2e)', () => {
           .expect(201);
         reliabilityCiIds.push(ci.body.id);
 
-        await request(app.getHttpServer())
+        await apiRequest(app)
           .post('/tickets')
           .set('Authorization', `Bearer ${employeeToken}`)
           .send({
@@ -389,7 +390,7 @@ describe('ConfigurationItems (e2e)', () => {
           .expect(201);
       }
 
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/configuration-items/models/reliability')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
@@ -408,7 +409,7 @@ describe('ConfigurationItems (e2e)', () => {
   // anticiper les renouvellements.
   describe('licenses', () => {
     it('rejects license listing for an EMPLOYEE', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/configuration-items/licenses')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
@@ -422,7 +423,7 @@ describe('ConfigurationItems (e2e)', () => {
         .toISOString()
         .slice(0, 10);
 
-      const ciSoon = await request(app.getHttpServer())
+      const ciSoon = await apiRequest(app)
         .post('/configuration-items')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -434,7 +435,7 @@ describe('ConfigurationItems (e2e)', () => {
         .expect(201);
       licenseCiIds.push(ciSoon.body.id);
 
-      const ciValid = await request(app.getHttpServer())
+      const ciValid = await apiRequest(app)
         .post('/configuration-items')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -446,7 +447,7 @@ describe('ConfigurationItems (e2e)', () => {
         .expect(201);
       licenseCiIds.push(ciValid.body.id);
 
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/configuration-items/licenses')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
@@ -464,7 +465,7 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('updates the existing license in place and clears it on clearLicense', async () => {
-      const created = await request(app.getHttpServer())
+      const created = await apiRequest(app)
         .post('/configuration-items')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -480,7 +481,7 @@ describe('ConfigurationItems (e2e)', () => {
       licenseCiIds.push(created.body.id);
       const licenseId = created.body.license.id;
 
-      const updated = await request(app.getHttpServer())
+      const updated = await apiRequest(app)
         .patch(`/configuration-items/${created.body.id}`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -490,7 +491,7 @@ describe('ConfigurationItems (e2e)', () => {
       expect(updated.body.license.id).toBe(licenseId);
       expect(updated.body.license.vendor).toBe('E2E CI SAP Enterprise');
 
-      const cleared = await request(app.getHttpServer())
+      const cleared = await apiRequest(app)
         .patch(`/configuration-items/${created.body.id}`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ clearLicense: true })
@@ -506,7 +507,7 @@ describe('ConfigurationItems (e2e)', () => {
     let dependentTicketId: string;
 
     it('rejects adding a relationship from an EMPLOYEE', async () => {
-      const dependent = await request(app.getHttpServer())
+      const dependent = await apiRequest(app)
         .post('/configuration-items')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({
@@ -517,7 +518,7 @@ describe('ConfigurationItems (e2e)', () => {
         .expect(201);
       dependentCiId = dependent.body.id;
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/configuration-items/${ciId}/relationships`)
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({ childCiId: dependentCiId, relationshipType: 'RUNS_ON' })
@@ -525,7 +526,7 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('rejects a CI depending on itself', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/configuration-items/${ciId}/relationships`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ childCiId: ciId, relationshipType: 'RUNS_ON' })
@@ -533,7 +534,7 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('lets a SUPERVISOR add a dependency relationship', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post(`/configuration-items/${ciId}/relationships`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ childCiId: dependentCiId, relationshipType: 'RUNS_ON' })
@@ -544,14 +545,14 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('rejects impact analysis for an EMPLOYEE', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get(`/configuration-items/${ciId}/impact`)
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
     });
 
     it('lets a TECHNICIAN see the dependent CI and its open tickets in the impact analysis', async () => {
-      const dependentTicket = await request(app.getHttpServer())
+      const dependentTicket = await apiRequest(app)
         .post('/tickets')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
@@ -563,7 +564,7 @@ describe('ConfigurationItems (e2e)', () => {
         .expect(201);
       dependentTicketId = dependentTicket.body.id;
 
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get(`/configuration-items/${ciId}/impact`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
@@ -579,12 +580,12 @@ describe('ConfigurationItems (e2e)', () => {
     });
 
     it('removes the relationship, which then disappears from the impact analysis', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .delete(`/configuration-items/${ciId}/relationships/${relationshipId}`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
 
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get(`/configuration-items/${ciId}/impact`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);

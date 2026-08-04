@@ -20,9 +20,9 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 const REFRESH_TOKEN_COOKIE = 'refreshToken';
 // docs/07 §9 : le refresh token ne doit jamais etre lisible par du JS
-// (cookie httpOnly). Le path est restreint a /auth pour ne pas etre
-// renvoye sur chaque requete API.
-const REFRESH_TOKEN_PATH = '/auth';
+// (cookie httpOnly). Le path est restreint au prefixe /auth (sous /api/v1,
+// docs/11 §1) pour ne pas etre renvoye sur chaque requete API.
+const REFRESH_TOKEN_PATH = '/api/v1/auth';
 
 @ApiTags('auth')
 @Controller('auth')

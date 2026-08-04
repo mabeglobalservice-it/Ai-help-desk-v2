@@ -8,6 +8,7 @@ import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Role } from '../generated/prisma/client';
+import { apiRequest } from './support/api-request';
 
 // docs/07 §9 : le refresh token voyage exclusivement via un cookie httpOnly
 // scope a /auth, jamais dans le corps JSON ni lisible par du JS cote client.
@@ -42,6 +43,7 @@ describe('Auth (e2e)', () => {
       new ValidationPipe({ whitelist: true, transform: true }),
     );
     app.use(cookieParser());
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -88,14 +90,14 @@ describe('Auth (e2e)', () => {
   });
 
   it('rejects a login with the wrong password', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/auth/login')
       .send({ email: activeEmail, password: 'wrong-password' })
       .expect(401);
   });
 
   it('rejects a login for a deactivated account', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/auth/login')
       .send({ email: inactiveEmail, password })
       .expect(401);
@@ -105,7 +107,7 @@ describe('Auth (e2e)', () => {
   let refreshTokenCookie: string;
 
   it('logs in successfully, returns an access token and sets an httpOnly refresh cookie', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email: activeEmail, password })
       .expect(200);
@@ -118,17 +120,17 @@ describe('Auth (e2e)', () => {
 
     refreshTokenCookie = extractRefreshTokenCookie(res);
     expect(refreshTokenCookie).toContain('HttpOnly');
-    expect(refreshTokenCookie).toContain('Path=/auth');
+    expect(refreshTokenCookie).toContain('Path=/api/v1/auth');
 
     accessToken = res.body.accessToken;
   });
 
   it('rejects /auth/me without a bearer token', async () => {
-    await request(app.getHttpServer()).get('/auth/me').expect(401);
+    await apiRequest(app).get('/auth/me').expect(401);
   });
 
   it('returns the current user for /auth/me with a valid bearer token', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/auth/me')
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
@@ -139,13 +141,13 @@ describe('Auth (e2e)', () => {
   });
 
   it('rejects /auth/refresh without a refresh cookie', async () => {
-    await request(app.getHttpServer()).post('/auth/refresh').expect(401);
+    await apiRequest(app).post('/auth/refresh').expect(401);
   });
 
   let rotatedRefreshTokenCookie: string;
 
   it('rotates the refresh token cookie on /auth/refresh', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/refresh')
       .set('Cookie', refreshTokenCookie)
       .expect(200);
@@ -158,20 +160,20 @@ describe('Auth (e2e)', () => {
   });
 
   it('rejects reusing a refresh token that was already rotated', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/auth/refresh')
       .set('Cookie', refreshTokenCookie)
       .expect(401);
   });
 
   it('revokes the refresh token on logout, after which it can no longer be used', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/auth/logout')
       .set('Authorization', `Bearer ${accessToken}`)
       .set('Cookie', rotatedRefreshTokenCookie)
       .expect(200);
 
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/auth/refresh')
       .set('Cookie', rotatedRefreshTokenCookie)
       .expect(401);

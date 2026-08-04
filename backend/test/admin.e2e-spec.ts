@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -26,7 +26,7 @@ describe('Admin (e2e)', () => {
   let adminToken: string;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -42,6 +42,7 @@ describe('Admin (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -102,11 +103,11 @@ describe('Admin (e2e)', () => {
 
   describe('GET/PATCH /admin/settings', () => {
     it('rejects a non-admin on both routes', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/admin/settings')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/admin/settings')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({ organizationName: 'Nope' })
@@ -114,7 +115,7 @@ describe('Admin (e2e)', () => {
     });
 
     it('returns the seeded singleton settings for an admin', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/admin/settings')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -124,7 +125,7 @@ describe('Admin (e2e)', () => {
     });
 
     it('updates the settings and persists the change', async () => {
-      const updated = await request(app.getHttpServer())
+      const updated = await apiRequest(app)
         .patch('/admin/settings')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ organizationName: 'E2E Test Org', maxClarifyingTurns: 7 })
@@ -133,7 +134,7 @@ describe('Admin (e2e)', () => {
       expect(updated.body.organizationName).toBe('E2E Test Org');
       expect(updated.body.maxClarifyingTurns).toBe(7);
 
-      const reread = await request(app.getHttpServer())
+      const reread = await apiRequest(app)
         .get('/admin/settings')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -141,7 +142,7 @@ describe('Admin (e2e)', () => {
     });
 
     it('rejects an out-of-range maxClarifyingTurns', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/admin/settings')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ maxClarifyingTurns: 0 })
@@ -151,11 +152,11 @@ describe('Admin (e2e)', () => {
 
   describe('GET/PATCH /admin/integrations', () => {
     it('rejects a non-admin on both routes', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/admin/integrations')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/admin/integrations/TEAMS')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({ isEnabled: false })
@@ -163,7 +164,7 @@ describe('Admin (e2e)', () => {
     });
 
     it('lists Teams/Slack/Email/IA and declares Graph/Intune as not implemented', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/admin/integrations')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -185,14 +186,14 @@ describe('Admin (e2e)', () => {
     });
 
     it('toggles an integration off and back on', async () => {
-      const disabled = await request(app.getHttpServer())
+      const disabled = await apiRequest(app)
         .patch('/admin/integrations/TEAMS')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ isEnabled: false })
         .expect(200);
       expect(disabled.body.isEnabled).toBe(false);
 
-      const list = await request(app.getHttpServer())
+      const list = await apiRequest(app)
         .get('/admin/integrations')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -200,7 +201,7 @@ describe('Admin (e2e)', () => {
         false,
       );
 
-      const reenabled = await request(app.getHttpServer())
+      const reenabled = await apiRequest(app)
         .patch('/admin/integrations/TEAMS')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ isEnabled: true })
@@ -209,7 +210,7 @@ describe('Admin (e2e)', () => {
     });
 
     it('rejects toggling Microsoft Graph or Intune (not implemented)', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch('/admin/integrations/MICROSOFT_GRAPH')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ isEnabled: true })

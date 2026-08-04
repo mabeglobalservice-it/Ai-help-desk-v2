@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -35,7 +35,7 @@ describe('Tickets (e2e)', () => {
   let supervisorToken: string;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -51,6 +51,7 @@ describe('Tickets (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -188,7 +189,7 @@ describe('Tickets (e2e)', () => {
   let ticketId: string;
 
   it('creates a ticket assigned to the technician (POST /tickets)', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/tickets')
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
@@ -209,7 +210,7 @@ describe('Tickets (e2e)', () => {
   // deadline (recomputed from the ticket's original creation time), not
   // silently keep the deadline the wrong priority produced.
   it('recomputes the SLA deadline from createdAt when the priority is corrected', async () => {
-    const created = await request(app.getHttpServer())
+    const created = await apiRequest(app)
       .post('/tickets')
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
@@ -223,7 +224,7 @@ describe('Tickets (e2e)', () => {
     expect(created.body.slaDueAt).toBeNull();
     const createdAt = new Date(created.body.createdAt).getTime();
 
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .patch(`/tickets/${created.body.id}`)
       .set('Authorization', `Bearer ${assignedTechToken}`)
       .send({ priorityId: urgentPriorityId })
@@ -239,7 +240,7 @@ describe('Tickets (e2e)', () => {
   });
 
   it('ignores a spoofed employeeId in the request body and always uses the authenticated requester (IDOR fix)', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/tickets')
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
@@ -257,7 +258,7 @@ describe('Tickets (e2e)', () => {
   });
 
   it('rejects ticket creation from a non-EMPLOYEE role', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/tickets')
       .set('Authorization', `Bearer ${assignedTechToken}`)
       .send({ employeeId, categoryId, priorityId, title: 'Should be rejected' })
@@ -265,7 +266,7 @@ describe('Tickets (e2e)', () => {
   });
 
   it('scopes GET /tickets to only the requester’s own tickets for an EMPLOYEE', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/tickets')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
@@ -278,7 +279,7 @@ describe('Tickets (e2e)', () => {
   });
 
   it('scopes GET /tickets to only assigned tickets for a TECHNICIAN', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/tickets')
       .set('Authorization', `Bearer ${otherTechToken}`)
       .expect(200);
@@ -290,21 +291,21 @@ describe('Tickets (e2e)', () => {
   });
 
   it('forbids GET /tickets/:id for a technician who is not assigned to it', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .get(`/tickets/${ticketId}`)
       .set('Authorization', `Bearer ${otherTechToken}`)
       .expect(403);
   });
 
   it('allows GET /tickets/:id for the assigned technician', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .get(`/tickets/${ticketId}`)
       .set('Authorization', `Bearer ${assignedTechToken}`)
       .expect(200);
   });
 
   it('forbids PATCH /tickets/:id for a technician who is not assigned to it', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/tickets/${ticketId}`)
       .set('Authorization', `Bearer ${otherTechToken}`)
       .send({ status: TicketStatus.IN_PROGRESS })
@@ -312,7 +313,7 @@ describe('Tickets (e2e)', () => {
   });
 
   it('lets the assigned technician move the ticket to IN_PROGRESS', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .patch(`/tickets/${ticketId}`)
       .set('Authorization', `Bearer ${assignedTechToken}`)
       .send({ status: TicketStatus.IN_PROGRESS })
@@ -322,7 +323,7 @@ describe('Tickets (e2e)', () => {
   });
 
   it('rejects rating a ticket that is not yet resolved', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post(`/tickets/${ticketId}/rate`)
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({ rating: 5 })
@@ -333,7 +334,7 @@ describe('Tickets (e2e)', () => {
   // Anthropic API (docs/10-architecture-rag.md §11, Agent Documentation
   // proposes a knowledge article) — slower than Jest's 5s default.
   it('lets the assigned technician resolve the ticket with a resolution note (UC-013)', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .patch(`/tickets/${ticketId}`)
       .set('Authorization', `Bearer ${assignedTechToken}`)
       .send({
@@ -349,7 +350,7 @@ describe('Tickets (e2e)', () => {
   }, 30000);
 
   it('rejects a rating from someone other than the owning employee', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post(`/tickets/${ticketId}/rate`)
       .set('Authorization', `Bearer ${assignedTechToken}`)
       .send({ rating: 5 })
@@ -357,7 +358,7 @@ describe('Tickets (e2e)', () => {
   });
 
   it('lets the owning employee rate the resolved ticket', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post(`/tickets/${ticketId}/rate`)
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({ rating: 5, comment: 'Résolu rapidement, merci' })
@@ -369,7 +370,7 @@ describe('Tickets (e2e)', () => {
   // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien).
   describe('POST /tickets/:id/assist (Agent Technicien)', () => {
     it('rejects an employee (réservé au rôle TECHNICIAN)', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/tickets/${ticketId}/assist`)
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({ question: "Comment relancer le spouleur d'impression ?" })
@@ -377,7 +378,7 @@ describe('Tickets (e2e)', () => {
     });
 
     it('rejects a technician who is not assigned to the ticket (RM-04)', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/tickets/${ticketId}/assist`)
         .set('Authorization', `Bearer ${otherTechToken}`)
         .send({ question: "Comment relancer le spouleur d'impression ?" })
@@ -388,7 +389,7 @@ describe('Tickets (e2e)', () => {
     // Technicien) — slower than Jest's 5s default, same as other e2e
     // files that trigger a real AI call.
     it('gives the assigned technician an explanation, never executing anything', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post(`/tickets/${ticketId}/assist`)
         .set('Authorization', `Bearer ${assignedTechToken}`)
         .send({ question: "Comment relancer le spouleur d'impression ?" })
@@ -402,7 +403,7 @@ describe('Tickets (e2e)', () => {
       // le technicien peut relire sa propre conversation via l'endpoint déjà
       // existant (DiagnosticsService.getConversation n'est pas restreint par
       // rôle, seulement par propriété de la conversation).
-      const conversation = await request(app.getHttpServer())
+      const conversation = await apiRequest(app)
         .get(`/diagnostics/${res.body.conversationId}`)
         .set('Authorization', `Bearer ${assignedTechToken}`)
         .expect(200);
@@ -415,7 +416,7 @@ describe('Tickets (e2e)', () => {
   // docs/02-brd.md BR-07, §7 "Critères de succès".
   describe('AI-suggested category/priority (BR-07)', () => {
     it('persists the AI-suggested category/priority separately from the final ones and includes them in the ticket response', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/tickets')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
@@ -435,7 +436,7 @@ describe('Tickets (e2e)', () => {
     });
 
     it('leaves the AI-suggested fields null for a purely manual ticket', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/tickets')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
@@ -452,7 +453,7 @@ describe('Tickets (e2e)', () => {
     });
 
     it('surfaces a non-null aiCorrectionRate on the supervisor dashboard once an AI-assisted ticket exists', async () => {
-      const created = await request(app.getHttpServer())
+      const created = await apiRequest(app)
         .post('/tickets')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
@@ -465,7 +466,7 @@ describe('Tickets (e2e)', () => {
         })
         .expect(201);
 
-      const stats = await request(app.getHttpServer())
+      const stats = await apiRequest(app)
         .get('/dashboard/stats')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
@@ -477,7 +478,7 @@ describe('Tickets (e2e)', () => {
     });
 
     it('rejects a non-supervisor/admin from reading the dashboard', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/dashboard/stats')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);

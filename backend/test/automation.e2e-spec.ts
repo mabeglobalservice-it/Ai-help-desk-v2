@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -51,7 +51,7 @@ describe('Automation (e2e)', () => {
   let autoResolveFallbackTicketId: string | undefined;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -67,6 +67,7 @@ describe('Automation (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -243,7 +244,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('rejects script creation from a non-ADMIN', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .post('/automation/scripts')
       .set('Authorization', `Bearer ${requesterToken}`)
       .send({
@@ -255,7 +256,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('lets an ADMIN create a non-sensitive and a sensitive script', async () => {
-    const nonSensitive = await request(app.getHttpServer())
+    const nonSensitive = await apiRequest(app)
       .post('/automation/scripts')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -268,7 +269,7 @@ describe('Automation (e2e)', () => {
     nonSensitiveScriptId = nonSensitive.body.id;
     expect(nonSensitive.body.isSensitive).toBe(false);
 
-    const sensitive = await request(app.getHttpServer())
+    const sensitive = await apiRequest(app)
       .post('/automation/scripts')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -286,7 +287,7 @@ describe('Automation (e2e)', () => {
   // API (or falls back locally), slower than Jest's 5s default.
   describe('suggest (US-28)', () => {
     it('suggests the matching script and a justification for an account-related ticket', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get(`/automation/suggest/${accountTicketId}`)
         .set('Authorization', `Bearer ${requesterToken}`)
         .expect(200);
@@ -297,14 +298,14 @@ describe('Automation (e2e)', () => {
     }, 30000);
 
     it('returns 404 when nothing matches the ticket', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get(`/automation/suggest/${unrelatedTicketId}`)
         .set('Authorization', `Bearer ${requesterToken}`)
         .expect(404);
     }, 30000);
 
     it('forbids a non-TECHNICIAN from requesting a suggestion', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get(`/automation/suggest/${accountTicketId}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(403);
@@ -312,7 +313,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('lists scripts for a TECHNICIAN', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/automation/scripts')
       .set('Authorization', `Bearer ${requesterToken}`)
       .expect(200);
@@ -323,7 +324,7 @@ describe('Automation (e2e)', () => {
   let nonSensitiveRunId: string;
 
   it('executes a non-sensitive script run immediately, without approval', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/automation/runs')
       .set('Authorization', `Bearer ${requesterToken}`)
       .send({
@@ -338,7 +339,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('forbids an unrelated technician from viewing someone else’s run', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .get(`/automation/runs/${nonSensitiveRunId}`)
       .set('Authorization', `Bearer ${plainTechToken}`)
       .expect(403);
@@ -347,7 +348,7 @@ describe('Automation (e2e)', () => {
   let approvalId: string;
 
   it('creates a pending approval for a sensitive script instead of executing it', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/automation/runs')
       .set('Authorization', `Bearer ${requesterToken}`)
       .send({
@@ -362,14 +363,14 @@ describe('Automation (e2e)', () => {
   });
 
   it('forbids a non-habilité technician from viewing the pending approvals queue', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .get('/automation/approvals/pending')
       .set('Authorization', `Bearer ${plainTechToken}`)
       .expect(403);
   });
 
   it('lets a habilité technician see the pending approval', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/automation/approvals/pending')
       .set('Authorization', `Bearer ${habiliteToken}`)
       .expect(200);
@@ -378,7 +379,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('forbids the requester from approving their own request', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/automation/approvals/${approvalId}`)
       .set('Authorization', `Bearer ${requesterToken}`)
       .send({ decision: ApprovalStatus.APPROVED })
@@ -386,7 +387,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('lets the habilité technician approve the sensitive run, which then executes it', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .patch(`/automation/approvals/${approvalId}`)
       .set('Authorization', `Bearer ${habiliteToken}`)
       .send({ decision: ApprovalStatus.APPROVED })
@@ -397,7 +398,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('rejects deciding an approval that was already processed', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/automation/approvals/${approvalId}`)
       .set('Authorization', `Bearer ${habiliteToken}`)
       .send({ decision: ApprovalStatus.REJECTED })
@@ -405,7 +406,7 @@ describe('Automation (e2e)', () => {
   });
 
   it('marks a rejected run as REJECTED without executing it', async () => {
-    const created = await request(app.getHttpServer())
+    const created = await apiRequest(app)
       .post('/automation/runs')
       .set('Authorization', `Bearer ${requesterToken}`)
       .send({
@@ -414,7 +415,7 @@ describe('Automation (e2e)', () => {
       })
       .expect(201);
 
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .patch(`/automation/approvals/${created.body.approval.id}`)
       .set('Authorization', `Bearer ${habiliteToken}`)
       .send({ decision: ApprovalStatus.REJECTED, note: 'Cible incorrecte' })
@@ -428,13 +429,13 @@ describe('Automation (e2e)', () => {
   // Timeout raised: hits the real Anthropic API.
   describe('auto-resolve (UC-015)', () => {
     it('rejects a non-EMPLOYEE on both routes', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/automation/auto-resolve')
         .set('Authorization', `Bearer ${requesterToken}`)
         .send({ description: 'Le cache du spouleur est plein.' })
         .expect(403);
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/automation/auto-resolve/confirm')
         .set('Authorization', `Bearer ${requesterToken}`)
         .send({
@@ -446,7 +447,7 @@ describe('Automation (e2e)', () => {
     });
 
     it('proposes eligible=false for a problem that matches no non-sensitive script', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/automation/auto-resolve')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
@@ -459,7 +460,7 @@ describe('Automation (e2e)', () => {
     }, 30000);
 
     it('proposes an eligible auto-resolution for a clear, unambiguous match, then executes it on confirm (no ticket created)', async () => {
-      const proposal = await request(app.getHttpServer())
+      const proposal = await apiRequest(app)
         .post('/automation/auto-resolve')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
@@ -472,7 +473,7 @@ describe('Automation (e2e)', () => {
       expect(proposal.body.scriptId).toBe(autoResolveScriptId);
       expect(proposal.body.confidence).toBeGreaterThanOrEqual(0.95);
 
-      const confirmed = await request(app.getHttpServer())
+      const confirmed = await apiRequest(app)
         .post('/automation/auto-resolve/confirm')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
@@ -507,7 +508,7 @@ describe('Automation (e2e)', () => {
       });
 
       try {
-        const res = await request(app.getHttpServer())
+        const res = await apiRequest(app)
           .post('/automation/auto-resolve/confirm')
           .set('Authorization', `Bearer ${employeeToken}`)
           .send({
@@ -546,7 +547,7 @@ describe('Automation (e2e)', () => {
     }, 30000);
 
     it('returns 404 when the script no longer exists', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/automation/auto-resolve/confirm')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({

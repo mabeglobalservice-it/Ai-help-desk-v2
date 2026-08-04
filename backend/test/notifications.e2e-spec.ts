@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -24,7 +24,7 @@ describe('Notifications (e2e)', () => {
   let adminToken: string;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -40,6 +40,7 @@ describe('Notifications (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -89,14 +90,14 @@ describe('Notifications (e2e)', () => {
 
   describe('GET /notifications/templates', () => {
     it('rejects a non-admin', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/notifications/templates')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
     });
 
     it('lists one template per NotificationType for an admin', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/notifications/templates')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
@@ -122,7 +123,7 @@ describe('Notifications (e2e)', () => {
 
   describe('GET /notifications', () => {
     it('is still open to any authenticated role (unaffected by the new admin-only route)', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get('/notifications')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(200);

@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -42,7 +42,7 @@ describe('Knowledge (e2e)', () => {
   let adminId: string;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -58,6 +58,7 @@ describe('Knowledge (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -287,7 +288,7 @@ describe('Knowledge (e2e)', () => {
   // (public) — aucun document de ce niveau n'est seedé ici, donc la
   // recherche réussit mais ne renvoie jamais un ticket/article (niveaux 2/3).
   it('allows the search for an EMPLOYEE, restricted to level 1 (doc 10 §10)', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/knowledge/search')
       .query({ q: 'imprimante bloquée' })
       .set('Authorization', `Bearer ${employeeToken}`)
@@ -297,14 +298,14 @@ describe('Knowledge (e2e)', () => {
   });
 
   it('rejects an unauthenticated search', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .get('/knowledge/search')
       .query({ q: 'imprimante' })
       .expect(401);
   });
 
   it('rejects a query shorter than 2 characters', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .get('/knowledge/search')
       .query({ q: 'a' })
       .set('Authorization', `Bearer ${technicianToken}`)
@@ -312,7 +313,7 @@ describe('Knowledge (e2e)', () => {
   });
 
   it('finds the matching resolved ticket and excludes unrelated or unresolved ones', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/knowledge/search')
       .query({ q: 'imprimante bloquée' })
       .set('Authorization', `Bearer ${technicianToken}`)
@@ -329,7 +330,7 @@ describe('Knowledge (e2e)', () => {
   });
 
   it('finds a different ticket for an unrelated query', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/knowledge/search')
       .query({ q: 'écran pilote graphique' })
       .set('Authorization', `Bearer ${technicianToken}`)
@@ -341,7 +342,7 @@ describe('Knowledge (e2e)', () => {
   });
 
   it('returns an empty array for a query matching nothing', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .get('/knowledge/search')
       .query({ q: 'zzznomatchxyz' })
       .set('Authorization', `Bearer ${technicianToken}`)
@@ -364,7 +365,7 @@ describe('Knowledge (e2e)', () => {
     }
 
     it('rejects listing pending articles for a plain TECHNICIAN', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/knowledge/articles/pending')
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(403);
@@ -374,13 +375,13 @@ describe('Knowledge (e2e)', () => {
     // call to the Anthropic API (Agent Documentation summary generation) —
     // slower than Jest's 5s default.
     it('proposes an article on resolution, keeps it unsearchable until approved, then indexes it', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch(`/tickets/${toApproveTicketId}`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .send({ status: TicketStatus.RESOLVED, resolutionNote: 'Résolu.' })
         .expect(200);
 
-      const pending = await request(app.getHttpServer())
+      const pending = await apiRequest(app)
         .get('/knowledge/articles/pending')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
@@ -393,7 +394,7 @@ describe('Knowledge (e2e)', () => {
 
       const keyword = longestWord(proposed.title || proposed.content);
 
-      const beforeApproval = await request(app.getHttpServer())
+      const beforeApproval = await apiRequest(app)
         .get('/knowledge/search')
         .query({ q: keyword })
         .set('Authorization', `Bearer ${technicianToken}`)
@@ -404,14 +405,14 @@ describe('Knowledge (e2e)', () => {
         ),
       ).toBe(false);
 
-      const approved = await request(app.getHttpServer())
+      const approved = await apiRequest(app)
         .patch(`/knowledge/articles/${proposed.id}/approve`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ decision: 'APPROVED' })
         .expect(200);
       expect(approved.body.status).toBe('APPROVED');
 
-      const afterApproval = await request(app.getHttpServer())
+      const afterApproval = await apiRequest(app)
         .get('/knowledge/search')
         .query({ q: keyword })
         .set('Authorization', `Bearer ${technicianToken}`)
@@ -422,7 +423,7 @@ describe('Knowledge (e2e)', () => {
         ),
       ).toBe(true);
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch(`/knowledge/articles/${proposed.id}/approve`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ decision: 'APPROVED' })
@@ -431,13 +432,13 @@ describe('Knowledge (e2e)', () => {
 
     // Timeout raised: same reason as above (real Anthropic API call).
     it('rejects a proposed article, which never becomes searchable', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch(`/tickets/${toRejectTicketId}`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .send({ status: TicketStatus.RESOLVED, resolutionNote: 'Résolu.' })
         .expect(200);
 
-      const pending = await request(app.getHttpServer())
+      const pending = await apiRequest(app)
         .get('/knowledge/articles/pending')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
@@ -447,7 +448,7 @@ describe('Knowledge (e2e)', () => {
       );
       expect(proposed).toBeDefined();
 
-      const rejected = await request(app.getHttpServer())
+      const rejected = await apiRequest(app)
         .patch(`/knowledge/articles/${proposed.id}/approve`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ decision: 'REJECTED' })
@@ -455,7 +456,7 @@ describe('Knowledge (e2e)', () => {
       expect(rejected.body.status).toBe('REJECTED');
 
       const keyword = longestWord(proposed.title || proposed.content);
-      const afterRejection = await request(app.getHttpServer())
+      const afterRejection = await apiRequest(app)
         .get('/knowledge/search')
         .query({ q: keyword })
         .set('Authorization', `Bearer ${technicianToken}`)
@@ -472,7 +473,7 @@ describe('Knowledge (e2e)', () => {
   // ("RAG multi-niveaux") : ingestion de documents et filtrage par niveau.
   describe('POST/GET/DELETE /knowledge/documents (RAG multi-niveaux)', () => {
     it('rejects a SUPERVISOR (doc 11 §7 only names Technicien/Admin)', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/knowledge/documents')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ title: 'x', content: 'Contenu suffisamment long' })
@@ -480,7 +481,7 @@ describe('Knowledge (e2e)', () => {
     });
 
     it('lets a TECHNICIAN upload a personal note, always indexed at level 5', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/knowledge/documents')
         .set('Authorization', `Bearer ${technicianToken}`)
         .send({
@@ -494,7 +495,7 @@ describe('Knowledge (e2e)', () => {
       expect(res.body.knowledgeLevel).toBe(5);
       expect(res.body.ownerId).toBeDefined();
 
-      const found = await request(app.getHttpServer())
+      const found = await apiRequest(app)
         .get('/knowledge/search')
         .query({ q: 'astuce imprimante personnelle' })
         .set('Authorization', `Bearer ${technicianToken}`)
@@ -506,7 +507,7 @@ describe('Knowledge (e2e)', () => {
       ).toBe(true);
 
       // Un autre technicien n'a pas accès à cette note personnelle.
-      const notFound = await request(app.getHttpServer())
+      const notFound = await apiRequest(app)
         .get('/knowledge/search')
         .query({ q: 'astuce imprimante personnelle' })
         .set('Authorization', `Bearer ${otherTechnicianToken}`)
@@ -514,24 +515,24 @@ describe('Knowledge (e2e)', () => {
       expect(notFound.body.some((row: any) => row.id === res.body.id)).toBe(
         false,
       );
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get(`/knowledge/documents/${res.body.id}`)
         .set('Authorization', `Bearer ${otherTechnicianToken}`)
         .expect(403);
 
       // Le propriétaire, lui, peut le consulter et le retirer.
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get(`/knowledge/documents/${res.body.id}`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .delete(`/knowledge/documents/${res.body.id}`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
     });
 
     it('lets an ADMIN upload a level-1 (public) document, visible to an EMPLOYEE', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/knowledge/documents')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
@@ -544,7 +545,7 @@ describe('Knowledge (e2e)', () => {
 
       expect(res.body.knowledgeLevel).toBe(1);
 
-      const found = await request(app.getHttpServer())
+      const found = await apiRequest(app)
         .get('/knowledge/search')
         .query({ q: 'connexion vpn publique' })
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -555,14 +556,14 @@ describe('Knowledge (e2e)', () => {
         ),
       ).toBe(true);
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .delete(`/knowledge/documents/${res.body.id}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
     });
 
     it('rejects an ADMIN specifying level 3 or 5 (auto-indexed elsewhere, not uploadable)', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/knowledge/documents')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
@@ -574,7 +575,7 @@ describe('Knowledge (e2e)', () => {
     });
 
     it('returns 404 for an unknown document id', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/knowledge/documents/00000000-0000-0000-0000-000000000000')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(404);

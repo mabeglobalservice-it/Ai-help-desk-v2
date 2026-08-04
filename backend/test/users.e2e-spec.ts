@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -27,7 +27,7 @@ describe('Users specialties (e2e)', () => {
   let otherCategoryId: string;
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -43,6 +43,7 @@ describe('Users specialties (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -118,7 +119,7 @@ describe('Users specialties (e2e)', () => {
   });
 
   it('rejects a non-ADMIN', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/users/${technicianId}/specialties`)
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({ categoryIds: [categoryId] })
@@ -126,7 +127,7 @@ describe('Users specialties (e2e)', () => {
   });
 
   it('returns 404 for an unknown user id', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch('/users/00000000-0000-0000-0000-000000000000/specialties')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ categoryIds: [categoryId] })
@@ -134,7 +135,7 @@ describe('Users specialties (e2e)', () => {
   });
 
   it('rejects assigning specialties to a non-TECHNICIAN', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/users/${employeeId}/specialties`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ categoryIds: [categoryId] })
@@ -142,7 +143,7 @@ describe('Users specialties (e2e)', () => {
   });
 
   it('rejects an unknown category id', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/users/${technicianId}/specialties`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ categoryIds: ['00000000-0000-0000-0000-000000000000'] })
@@ -150,7 +151,7 @@ describe('Users specialties (e2e)', () => {
   });
 
   it('assigns one or more specialties to a technician', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .patch(`/users/${technicianId}/specialties`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ categoryIds: [categoryId, otherCategoryId] })
@@ -163,7 +164,7 @@ describe('Users specialties (e2e)', () => {
       [categoryId, otherCategoryId].sort(),
     );
 
-    const fetched = await request(app.getHttpServer())
+    const fetched = await apiRequest(app)
       .get(`/users/${technicianId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -171,26 +172,26 @@ describe('Users specialties (e2e)', () => {
   });
 
   it('replaces the specialty set (not additive) and clears it with an empty array', async () => {
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/users/${technicianId}/specialties`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ categoryIds: [categoryId] })
       .expect(200);
 
-    const replaced = await request(app.getHttpServer())
+    const replaced = await apiRequest(app)
       .get(`/users/${technicianId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(replaced.body.specialties).toHaveLength(1);
     expect(replaced.body.specialties[0].categoryId).toBe(categoryId);
 
-    await request(app.getHttpServer())
+    await apiRequest(app)
       .patch(`/users/${technicianId}/specialties`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ categoryIds: [] })
       .expect(200);
 
-    const cleared = await request(app.getHttpServer())
+    const cleared = await apiRequest(app)
       .get(`/users/${technicianId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
@@ -247,7 +248,7 @@ describe('Users specialties (e2e)', () => {
         data: { teamId },
       });
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .patch(`/users/${technicianId}/specialties`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ categoryIds: [categoryId] })
@@ -287,7 +288,7 @@ describe('Users specialties (e2e)', () => {
     });
 
     it('assigns the ticket to the specialist technician rather than the team-matched one', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post('/tickets')
         .set('Authorization', `Bearer ${employee2Token}`)
         .send({

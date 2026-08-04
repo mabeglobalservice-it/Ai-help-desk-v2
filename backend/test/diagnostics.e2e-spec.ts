@@ -1,7 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import request from 'supertest';
+import { apiRequest } from './support/api-request';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
@@ -35,7 +35,7 @@ describe('Diagnostics (e2e)', () => {
   const createdTicketIds: string[] = [];
 
   async function loginAs(email: string): Promise<string> {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/auth/login')
       .send({ email, password })
       .expect(200);
@@ -51,7 +51,7 @@ describe('Diagnostics (e2e)', () => {
     token: string,
     firstMessage: string,
   ): Promise<{ conversationId: string; body: Record<string, any> }> {
-    let res = await request(app.getHttpServer())
+    let res = await apiRequest(app)
       .post('/diagnostics')
       .set('Authorization', `Bearer ${token}`)
       .send({ message: firstMessage })
@@ -60,7 +60,7 @@ describe('Diagnostics (e2e)', () => {
     const startedConversationId: string = res.body.conversationId;
     let turns = 0;
     while (res.body.status === 'NEEDS_INFO' && turns < 5) {
-      res = await request(app.getHttpServer())
+      res = await apiRequest(app)
         .post('/diagnostics')
         .set('Authorization', `Bearer ${token}`)
         .send({
@@ -82,6 +82,7 @@ describe('Diagnostics (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.setGlobalPrefix('api/v1');
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -194,7 +195,7 @@ describe('Diagnostics (e2e)', () => {
   // Diagnostic) — slower than Jest's 5s default, same as other e2e files
   // that trigger a real AI call.
   it('creates an AI conversation when diagnosing a ticket description (POST /tickets/ai-diagnose)', async () => {
-    const res = await request(app.getHttpServer())
+    const res = await apiRequest(app)
       .post('/tickets/ai-diagnose')
       .set('Authorization', `Bearer ${ownerToken}`)
       .send({
@@ -236,7 +237,7 @@ describe('Diagnostics (e2e)', () => {
       // never changes AiConversation.status itself (only the /resolve
       // endpoint does), so it is still ONGOING and a single extra call
       // suffices to exercise the ownership check.
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/diagnostics')
         .set('Authorization', `Bearer ${otherEmployeeToken}`)
         .send({ message: 'oui', conversationId: helpdeskConversationId })
@@ -244,7 +245,7 @@ describe('Diagnostics (e2e)', () => {
     });
 
     it('returns 404 when continuing an unknown conversation id', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post('/diagnostics')
         .set('Authorization', `Bearer ${ownerToken}`)
         .send({
@@ -282,7 +283,7 @@ describe('Diagnostics (e2e)', () => {
     it('marks the conversation RESOLVED and creates no ticket when the problem is fixed (US-02)', async () => {
       const convId = await seedOngoingConversation(ownerId);
 
-      const resolveRes = await request(app.getHttpServer())
+      const resolveRes = await apiRequest(app)
         .post(`/diagnostics/${convId}/resolve`)
         .set('Authorization', `Bearer ${ownerToken}`)
         .send({ resolved: true })
@@ -299,13 +300,13 @@ describe('Diagnostics (e2e)', () => {
     it('rejects resolving a conversation that is already terminated', async () => {
       const convId = await seedOngoingConversation(ownerId);
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/diagnostics/${convId}/resolve`)
         .set('Authorization', `Bearer ${ownerToken}`)
         .send({ resolved: true })
         .expect(201);
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/diagnostics/${convId}/resolve`)
         .set('Authorization', `Bearer ${ownerToken}`)
         .send({ resolved: true })
@@ -315,7 +316,7 @@ describe('Diagnostics (e2e)', () => {
     it("rejects a non-owner resolving someone else's conversation", async () => {
       const convId = await seedOngoingConversation(ownerId);
 
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/diagnostics/${convId}/resolve`)
         .set('Authorization', `Bearer ${otherEmployeeToken}`)
         .send({ resolved: true })
@@ -328,7 +329,7 @@ describe('Diagnostics (e2e)', () => {
     it('leaves the conversation ONGOING when the problem persists, then escalates it once a ticket is created', async () => {
       const convId = await seedOngoingConversation(otherEmployeeId);
 
-      const resolveRes = await request(app.getHttpServer())
+      const resolveRes = await apiRequest(app)
         .post(`/diagnostics/${convId}/resolve`)
         .set('Authorization', `Bearer ${otherEmployeeToken}`)
         .send({ resolved: false })
@@ -340,7 +341,7 @@ describe('Diagnostics (e2e)', () => {
       });
       expect(stillOngoing?.status).toBe('ONGOING');
 
-      const ticketRes = await request(app.getHttpServer())
+      const ticketRes = await apiRequest(app)
         .post('/tickets')
         .set('Authorization', `Bearer ${otherEmployeeToken}`)
         .send({
@@ -363,7 +364,7 @@ describe('Diagnostics (e2e)', () => {
 
   describe('GET /diagnostics/:conversationId', () => {
     it('returns the conversation history (user then agent message) to its owner', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get(`/diagnostics/${conversationId}`)
         .set('Authorization', `Bearer ${ownerToken}`)
         .expect(200);
@@ -374,14 +375,14 @@ describe('Diagnostics (e2e)', () => {
     });
 
     it('forbids a non-owner employee from reading the conversation', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get(`/diagnostics/${conversationId}`)
         .set('Authorization', `Bearer ${otherEmployeeToken}`)
         .expect(403);
     });
 
     it('returns 404 for an unknown conversation id', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/diagnostics/00000000-0000-0000-0000-000000000000')
         .set('Authorization', `Bearer ${ownerToken}`)
         .expect(404);
@@ -390,7 +391,7 @@ describe('Diagnostics (e2e)', () => {
 
   describe('POST /diagnostics/:conversationId/feedback', () => {
     it('rejects an employee (Technicien only, docs/11 §5)', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .post(`/diagnostics/${conversationId}/feedback`)
         .set('Authorization', `Bearer ${ownerToken}`)
         .send({ wasHelpful: true })
@@ -398,7 +399,7 @@ describe('Diagnostics (e2e)', () => {
     });
 
     it('lets a technician record whether the diagnosis was helpful', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .post(`/diagnostics/${conversationId}/feedback`)
         .set('Authorization', `Bearer ${technicianToken}`)
         .send({ wasHelpful: true, comment: 'Diagnostic pertinent' })
@@ -411,14 +412,14 @@ describe('Diagnostics (e2e)', () => {
 
   describe('GET /ai/conversations/:id/cost', () => {
     it('rejects a non-supervisor/admin', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get(`/ai/conversations/${conversationId}/cost`)
         .set('Authorization', `Bearer ${ownerToken}`)
         .expect(403);
     });
 
     it('returns the aggregated cost for a supervisor', async () => {
-      const res = await request(app.getHttpServer())
+      const res = await apiRequest(app)
         .get(`/ai/conversations/${conversationId}/cost`)
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(200);
@@ -429,7 +430,7 @@ describe('Diagnostics (e2e)', () => {
     });
 
     it('returns 404 for an unknown conversation id', async () => {
-      await request(app.getHttpServer())
+      await apiRequest(app)
         .get('/ai/conversations/00000000-0000-0000-0000-000000000000/cost')
         .set('Authorization', `Bearer ${supervisorToken}`)
         .expect(404);
