@@ -62,7 +62,7 @@ describe('TicketsService', () => {
     knowledgeService = {
       proposeArticleFromTicket: jest.fn().mockResolvedValue(null),
       indexResolvedTicket: jest.fn().mockResolvedValue(undefined),
-      search: jest.fn().mockResolvedValue([]),
+      search: jest.fn().mockResolvedValue({ results: [], lowConfidence: true }),
     };
     aiService = { assistTechnician: jest.fn() };
 
@@ -817,7 +817,10 @@ describe('TicketsService', () => {
 
     it('delegates to AiService with the ticket context when the CI has no history', async () => {
       prisma.ticket.findUnique.mockResolvedValue(baseTicket);
-      knowledgeService.search.mockResolvedValue([]);
+      knowledgeService.search.mockResolvedValue({
+        results: [],
+        lowConfidence: true,
+      });
       aiService.assistTechnician.mockResolvedValue({
         explanation: 'Redémarrez le service de spouleur.',
         suggestedScript: null,
@@ -840,6 +843,7 @@ describe('TicketsService', () => {
           categoryName: 'Matériel',
           ciHistory: null,
           knowledgeExcerpts: [],
+          knowledgeLowConfidence: true,
         },
       );
       expect(result.conversationId).toBe('conv-1');
@@ -867,7 +871,10 @@ describe('TicketsService', () => {
           createdAt: new Date(),
         },
       ]);
-      knowledgeService.search.mockResolvedValue([]);
+      knowledgeService.search.mockResolvedValue({
+        results: [],
+        lowConfidence: true,
+      });
       aiService.assistTechnician.mockResolvedValue({
         explanation: 'Explication',
         suggestedScript: null,
@@ -889,12 +896,15 @@ describe('TicketsService', () => {
 
     it('passes the top 3 knowledge search results as excerpts', async () => {
       prisma.ticket.findUnique.mockResolvedValue(baseTicket);
-      knowledgeService.search.mockResolvedValue([
-        { title: 'Article A', snippet: 'Extrait A' },
-        { title: 'Article B', snippet: 'Extrait B' },
-        { title: 'Article C', snippet: 'Extrait C' },
-        { title: 'Article D', snippet: 'Extrait D' },
-      ]);
+      knowledgeService.search.mockResolvedValue({
+        results: [
+          { title: 'Article A', snippet: 'Extrait A' },
+          { title: 'Article B', snippet: 'Extrait B' },
+          { title: 'Article C', snippet: 'Extrait C' },
+          { title: 'Article D', snippet: 'Extrait D' },
+        ],
+        lowConfidence: false,
+      });
       aiService.assistTechnician.mockResolvedValue({
         explanation: 'Explication',
         suggestedScript: null,
@@ -935,6 +945,7 @@ describe('TicketsService', () => {
       expect(result.conversationId).toBe('conv-4');
       const [, , context] = aiService.assistTechnician.mock.calls[0];
       expect(context.knowledgeExcerpts).toEqual([]);
+      expect(context.knowledgeLowConfidence).toBe(true);
     });
   });
 });

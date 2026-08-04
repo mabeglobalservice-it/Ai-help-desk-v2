@@ -34,6 +34,17 @@ export interface KnowledgeSearchResult {
   snippet: string;
 }
 
+// docs/10-architecture-rag.md §9 (Agent Documentation) : "signaler
+// explicitement lorsque la confiance de la recherche est faible, plutôt
+// que de forcer une réponse peu fiable" — distinct du filtrage
+// RELEVANCE_THRESHOLD (qui écarte un chunk trop faible pour être utile du
+// tout) : un résultat peut franchir ce seuil sans être une correspondance
+// solide sur laquelle fonder une réponse présentée comme fiable.
+export interface KnowledgeSearchResponse {
+  results: KnowledgeSearchResult[];
+  lowConfidence: boolean;
+}
+
 interface Requester {
   userId: string;
   role: Role;
@@ -53,6 +64,11 @@ const ROLE_LEVELS: Record<Role, number[]> = {
 // lexical, voir rag/embedding.util.ts), un chunk est écarté plutôt que
 // forcé dans les résultats (doc 10 §8, "seuil de similarité minimal").
 const RELEVANCE_THRESHOLD = 0.2;
+// Au-dessus du seuil de pertinence minimal mais en dessous de celui-ci, un
+// résultat est encore renvoyé (c'est la meilleure information disponible)
+// mais signalé comme peu fiable plutôt que présenté comme une réponse
+// documentée solide (doc 10 §9).
+const CONFIDENCE_THRESHOLD = 0.4;
 const MAX_CANDIDATES = 500;
 const TOP_K = 10;
 const COSINE_WEIGHT = 0.6;
@@ -117,7 +133,7 @@ export class KnowledgeService {
   async search(
     query: string,
     requester: Requester,
-  ): Promise<KnowledgeSearchResult[]> {
+  ): Promise<KnowledgeSearchResponse> {
     const queryTokens = tokenize(query);
     const queryVector = embed(query);
 
@@ -168,7 +184,11 @@ export class KnowledgeService {
       .sort((a, b) => b.score - a.score)
       .slice(0, TOP_K);
 
-    return this.hydrateResults(top, queryTokens);
+    const results = await this.hydrateResults(top, queryTokens);
+    const lowConfidence =
+      results.length === 0 || results[0].rank < CONFIDENCE_THRESHOLD;
+
+    return { results, lowConfidence };
   }
 
   private async hydrateResults(

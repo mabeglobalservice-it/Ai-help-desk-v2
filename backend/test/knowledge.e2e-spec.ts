@@ -294,7 +294,7 @@ describe('Knowledge (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
 
-    expect(res.body).toEqual([]);
+    expect(res.body.results).toEqual([]);
   });
 
   it('rejects an unauthenticated search', async () => {
@@ -319,14 +319,19 @@ describe('Knowledge (e2e)', () => {
       .set('Authorization', `Bearer ${technicianToken}`)
       .expect(200);
 
-    const ids = res.body.map((row: any) => row.id);
+    const ids = res.body.results.map((row: any) => row.id);
     expect(ids).toContain(printerTicketId);
     expect(ids).not.toContain(screenTicketId);
     expect(ids).not.toContain(openTicketId); // still NEW, never resolved
 
-    const match = res.body.find((row: any) => row.id === printerTicketId);
+    const match = res.body.results.find(
+      (row: any) => row.id === printerTicketId,
+    );
     expect(match.reference).toBe('TCK-E2E-KNOWLEDGE-0001');
     expect(match.snippet).toContain('**');
+    // docs/10-architecture-rag.md §9 : une correspondance forte et sans
+    // ambiguïté ne doit pas être signalée comme peu fiable.
+    expect(res.body.lowConfidence).toBe(false);
   });
 
   it('finds a different ticket for an unrelated query', async () => {
@@ -336,7 +341,7 @@ describe('Knowledge (e2e)', () => {
       .set('Authorization', `Bearer ${technicianToken}`)
       .expect(200);
 
-    const ids = res.body.map((row: any) => row.id);
+    const ids = res.body.results.map((row: any) => row.id);
     expect(ids).toContain(screenTicketId);
     expect(ids).not.toContain(printerTicketId);
   });
@@ -348,7 +353,8 @@ describe('Knowledge (e2e)', () => {
       .set('Authorization', `Bearer ${technicianToken}`)
       .expect(200);
 
-    expect(res.body).toEqual([]);
+    expect(res.body.results).toEqual([]);
+    expect(res.body.lowConfidence).toBe(true);
   });
 
   // docs/10-architecture-rag.md §11 "Apprentissage continu", docs/11-
@@ -400,7 +406,7 @@ describe('Knowledge (e2e)', () => {
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
       expect(
-        beforeApproval.body.some(
+        beforeApproval.body.results.some(
           (row: any) => row.sourceType === 'ARTICLE' && row.id === proposed.id,
         ),
       ).toBe(false);
@@ -418,7 +424,7 @@ describe('Knowledge (e2e)', () => {
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
       expect(
-        afterApproval.body.some(
+        afterApproval.body.results.some(
           (row: any) => row.sourceType === 'ARTICLE' && row.id === proposed.id,
         ),
       ).toBe(true);
@@ -462,7 +468,7 @@ describe('Knowledge (e2e)', () => {
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
       expect(
-        afterRejection.body.some(
+        afterRejection.body.results.some(
           (row: any) => row.sourceType === 'ARTICLE' && row.id === proposed.id,
         ),
       ).toBe(false);
@@ -501,7 +507,7 @@ describe('Knowledge (e2e)', () => {
         .set('Authorization', `Bearer ${technicianToken}`)
         .expect(200);
       expect(
-        found.body.some(
+        found.body.results.some(
           (row: any) => row.sourceType === 'DOCUMENT' && row.id === res.body.id,
         ),
       ).toBe(true);
@@ -512,9 +518,9 @@ describe('Knowledge (e2e)', () => {
         .query({ q: 'astuce imprimante personnelle' })
         .set('Authorization', `Bearer ${otherTechnicianToken}`)
         .expect(200);
-      expect(notFound.body.some((row: any) => row.id === res.body.id)).toBe(
-        false,
-      );
+      expect(
+        notFound.body.results.some((row: any) => row.id === res.body.id),
+      ).toBe(false);
       await apiRequest(app)
         .get(`/knowledge/documents/${res.body.id}`)
         .set('Authorization', `Bearer ${otherTechnicianToken}`)
@@ -551,7 +557,7 @@ describe('Knowledge (e2e)', () => {
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(200);
       expect(
-        found.body.some(
+        found.body.results.some(
           (row: any) => row.sourceType === 'DOCUMENT' && row.id === res.body.id,
         ),
       ).toBe(true);

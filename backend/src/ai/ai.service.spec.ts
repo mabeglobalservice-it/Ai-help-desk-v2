@@ -431,6 +431,7 @@ describe('AiService', () => {
       categoryName: 'Matériel',
       ciHistory: null,
       knowledgeExcerpts: [] as string[],
+      knowledgeLowConfidence: false,
     };
 
     it('falls back to a generic, script-free explanation when no API key is configured', async () => {

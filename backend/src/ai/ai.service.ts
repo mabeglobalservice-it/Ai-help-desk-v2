@@ -225,6 +225,11 @@ export interface TechnicianAssistContext {
   categoryName: string;
   ciHistory: string | null;
   knowledgeExcerpts: string[];
+  // docs/10-architecture-rag.md §9 : l'Agent Documentation doit signaler
+  // explicitement une confiance de recherche faible plutôt que de laisser
+  // l'Agent Technicien présenter un extrait faible (ou une absence de
+  // documentation) comme une réponse fiable.
+  knowledgeLowConfidence: boolean;
 }
 
 export interface TechnicianAssistResult {
@@ -1166,6 +1171,23 @@ export class AiService {
     evaluation: TechnicianAssistEvaluation;
     usage: Anthropic.Usage;
   }> {
+    // docs/10-architecture-rag.md §9 : signale explicitement une confiance
+    // documentaire faible plutôt que de laisser le modèle présenter un
+    // extrait faible (ou une absence de résultat) comme une source fiable.
+    const knowledgeSection =
+      (context.knowledgeExcerpts.length > 0
+        ? '\n\nExtraits de documentation pertinents :\n' +
+          context.knowledgeExcerpts
+            .map((excerpt, i) => `${i + 1}. ${excerpt}`)
+            .join('\n')
+        : '') +
+      (context.knowledgeLowConfidence
+        ? '\n\n' +
+          (context.knowledgeExcerpts.length > 0
+            ? "Ces extraits ont un score de pertinence faible : si tu t'appuies dessus, indique explicitement au technicien que la confiance documentaire est faible plutôt que de présenter la réponse comme fiable."
+            : "Aucune documentation interne suffisamment pertinente n'a été trouvée pour cette question : indique explicitement au technicien qu'aucune source fiable n'appuie ta réponse, plutôt que de lui en donner une comme si elle était documentée.")
+        : '');
+
     const system =
       TECHNICIAN_ASSIST_SYSTEM_PROMPT +
       `\n\nTicket concerné : ${context.ticketTitle} (catégorie : ${context.categoryName})` +
@@ -1175,12 +1197,7 @@ export class AiService {
       (context.ciHistory
         ? `\n\nHistorique CMDB de l'actif concerné :\n${context.ciHistory}`
         : '') +
-      (context.knowledgeExcerpts.length > 0
-        ? '\n\nExtraits de documentation pertinents :\n' +
-          context.knowledgeExcerpts
-            .map((excerpt, i) => `${i + 1}. ${excerpt}`)
-            .join('\n')
-        : '');
+      knowledgeSection;
 
     const response = await client.messages.create({
       model: MODEL,

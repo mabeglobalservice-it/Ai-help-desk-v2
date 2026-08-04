@@ -283,9 +283,11 @@ export class TicketsService {
   async assistTechnician(id: string, requester: Requester, question: string) {
     const ticket = await this.findOne(id, requester);
 
-    const [ciHistory, knowledgeResults] = await Promise.all([
+    const [ciHistory, knowledgeSearch] = await Promise.all([
       ticket.ciId ? this.buildCiHistory(ticket.ciId) : Promise.resolve(null),
-      this.knowledgeService.search(question, requester).catch(() => []),
+      this.knowledgeService
+        .search(question, requester)
+        .catch(() => ({ results: [], lowConfidence: true })),
     ]);
 
     return this.aiService.assistTechnician(requester.userId, question, {
@@ -293,9 +295,10 @@ export class TicketsService {
       ticketSummary: ticket.summary,
       categoryName: ticket.category.name,
       ciHistory,
-      knowledgeExcerpts: knowledgeResults
+      knowledgeExcerpts: knowledgeSearch.results
         .slice(0, 3)
         .map((result) => `${result.title} — ${result.snippet}`),
+      knowledgeLowConfidence: knowledgeSearch.lowConfidence,
     });
   }
 

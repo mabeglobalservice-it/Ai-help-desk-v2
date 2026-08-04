@@ -168,10 +168,114 @@ describe('KnowledgeService', () => {
         role: Role.TECHNICIAN,
       });
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('tkt-1');
-      expect(result[0].sourceType).toBe('TICKET');
-      expect(result[0].snippet).toContain('**');
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].id).toBe('tkt-1');
+      expect(result.results[0].sourceType).toBe('TICKET');
+      expect(result.results[0].snippet).toContain('**');
+    });
+
+    // docs/10-architecture-rag.md §9 : "signaler explicitement lorsque la
+    // confiance de la recherche est faible, plutôt que de forcer une
+    // réponse peu fiable".
+    it('flags lowConfidence when no chunk clears the relevance threshold', async () => {
+      prisma.documentChunk.findMany.mockResolvedValue([
+        {
+          id: 'chunk-unrelated',
+          documentId: null,
+          ticketId: 'tkt-2',
+          knowledgeArticleId: null,
+          scriptId: null,
+          knowledgeLevel: 3,
+          ownerId: null,
+          content: 'Écran bleu, mise à jour du pilote graphique',
+          embedding: embed('Écran bleu, mise à jour du pilote graphique'),
+        },
+      ]);
+
+      const result = await service.search('imprimante bloquée réseau', {
+        userId: 'tech-1',
+        role: Role.TECHNICIAN,
+      });
+
+      expect(result.results).toHaveLength(0);
+      expect(result.lowConfidence).toBe(true);
+    });
+
+    it('flags lowConfidence for a match that clears the relevance floor but stays weak', async () => {
+      prisma.documentChunk.findMany.mockResolvedValue([
+        {
+          id: 'chunk-weak',
+          documentId: null,
+          ticketId: 'tkt-1',
+          knowledgeArticleId: null,
+          scriptId: null,
+          knowledgeLevel: 3,
+          ownerId: null,
+          content: 'Imprimante réseau bloquée',
+          embedding: embed('Imprimante réseau bloquée'),
+        },
+      ]);
+      prisma.ticket.findMany.mockResolvedValue([
+        {
+          id: 'tkt-1',
+          reference: 'TCK-0001',
+          title: 'Imprimante bloquée',
+          summary: null,
+          resolvedAt: new Date('2026-01-01'),
+          category: { name: 'Matériel' },
+          priority: { name: 'Moyenne' },
+        },
+      ]);
+
+      // Query shares only one significant token ("imprimante") out of three
+      // with the chunk — enough to clear RELEVANCE_THRESHOLD (0.2) via
+      // partial lexical/cosine overlap, but well short of
+      // CONFIDENCE_THRESHOLD (0.4).
+      const result = await service.search('imprimante voiture jardin', {
+        userId: 'tech-1',
+        role: Role.TECHNICIAN,
+      });
+
+      expect(result.results.length).toBeGreaterThan(0);
+      expect(result.results[0].rank).toBeLessThan(0.4);
+      expect(result.lowConfidence).toBe(true);
+    });
+
+    it('does not flag lowConfidence for a strong, unambiguous match', async () => {
+      prisma.documentChunk.findMany.mockResolvedValue([
+        {
+          id: 'chunk-match',
+          documentId: null,
+          ticketId: 'tkt-1',
+          knowledgeArticleId: null,
+          scriptId: null,
+          knowledgeLevel: 3,
+          ownerId: null,
+          content: 'Imprimante réseau bloquée, redémarrage du spouleur',
+          embedding: embed(
+            'Imprimante réseau bloquée, redémarrage du spouleur',
+          ),
+        },
+      ]);
+      prisma.ticket.findMany.mockResolvedValue([
+        {
+          id: 'tkt-1',
+          reference: 'TCK-0001',
+          title: 'Imprimante bloquée',
+          summary: null,
+          resolvedAt: new Date('2026-01-01'),
+          category: { name: 'Matériel' },
+          priority: { name: 'Moyenne' },
+        },
+      ]);
+
+      const result = await service.search(
+        'imprimante réseau bloquée redémarrage spouleur',
+        { userId: 'tech-1', role: Role.TECHNICIAN },
+      );
+
+      expect(result.results[0].rank).toBeGreaterThanOrEqual(0.4);
+      expect(result.lowConfidence).toBe(false);
     });
   });
 

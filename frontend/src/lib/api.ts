@@ -531,9 +531,17 @@ export interface KnowledgeSearchResult {
   snippet: string;
 }
 
-export function searchKnowledge(token: string, q: string): Promise<KnowledgeSearchResult[]> {
+// docs/10-architecture-rag.md §9 : le backend signale explicitement une
+// confiance de recherche faible plutôt que de laisser croire que tout
+// résultat renvoyé est une source documentée fiable.
+export interface KnowledgeSearchResponse {
+  results: KnowledgeSearchResult[];
+  lowConfidence: boolean;
+}
+
+export function searchKnowledge(token: string, q: string): Promise<KnowledgeSearchResponse> {
   const params = new URLSearchParams({ q });
-  return apiFetch<KnowledgeSearchResult[]>(`/knowledge/search?${params.toString()}`, token);
+  return apiFetch<KnowledgeSearchResponse>(`/knowledge/search?${params.toString()}`, token);
 }
 
 export interface KnowledgeDocument {

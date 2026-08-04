@@ -83,6 +83,7 @@ export default function KnowledgePage() {
 
   const [q, setQ] = useState("");
   const [results, setResults] = useState<KnowledgeSearchResult[] | null>(null);
+  const [lowConfidence, setLowConfidence] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -114,7 +115,8 @@ export default function KnowledgePage() {
     setIsSearching(true);
     try {
       const data = await searchKnowledge(token, q.trim());
-      setResults(data);
+      setResults(data.results);
+      setLowConfidence(data.lowConfidence);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         clearSession();
@@ -232,10 +234,19 @@ export default function KnowledgePage() {
           {results !== null ? (
             results.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Aucun résultat accessible à votre rôle pour cette recherche.
+                Aucune source suffisamment pertinente et accessible à votre rôle n&apos;a été
+                trouvée pour cette recherche.
               </p>
             ) : (
               <div className="flex flex-col gap-3">
+                {lowConfidence ? (
+                  <Alert>
+                    <AlertDescription>
+                      Pertinence faible : ces résultats sont les plus proches trouvés, mais aucun
+                      ne correspond fortement à la recherche. À vérifier avant de vous y fier.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 {results.map((result) => {
                   const canDelete =
                     result.sourceType === "DOCUMENT" && (isAdmin || result.knowledgeLevel === 5);
