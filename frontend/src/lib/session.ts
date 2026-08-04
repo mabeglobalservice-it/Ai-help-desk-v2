@@ -1,30 +1,26 @@
 import type { SessionUser } from "./api";
 
-const TOKEN_KEY = "ai-help-desk.token";
-const REFRESH_TOKEN_KEY = "ai-help-desk.refreshToken";
 const USER_KEY = "ai-help-desk.user";
 
-export function saveSession(token: string, refreshToken: string, user: SessionUser) {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+// docs/07 §9 : l'access token n'est jamais persiste (localStorage/cookie JS-
+// lisible) — uniquement garde en memoire, il disparait a chaque rechargement
+// complet de page et doit etre restaure via un refresh silencieux
+// (voir SessionBootstrap) a partir du refresh token en cookie httpOnly.
+let accessToken: string | null = null;
+
+export function saveSession(token: string, user: SessionUser) {
+  accessToken = token;
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
-// Used after a silent token refresh: replaces the access/refresh pair
-// without touching the stored user (unchanged across a refresh).
-export function updateTokens(token: string, refreshToken: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+// Used after a silent token refresh: replaces the access token without
+// touching the stored user (unchanged across a refresh).
+export function updateTokens(token: string) {
+  accessToken = token;
 }
 
 export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+  return accessToken;
 }
 
 export function getSessionUser(): SessionUser | null {
@@ -39,7 +35,6 @@ export function getSessionUser(): SessionUser | null {
 }
 
 export function clearSession() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  accessToken = null;
   localStorage.removeItem(USER_KEY);
 }

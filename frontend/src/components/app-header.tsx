@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { logout } from "@/lib/api";
-import { clearSession, getRefreshToken, getToken } from "@/lib/session";
+import { clearSession, getToken } from "@/lib/session";
 import { disconnectSocket } from "@/lib/socket";
 import { useSessionUser } from "@/lib/use-session-user";
 import { Button } from "@/components/ui/button";
@@ -28,10 +28,9 @@ export function AppHeader({ title, action }: AppHeaderProps) {
 
   async function handleSignOut() {
     const token = getToken();
-    const refreshToken = getRefreshToken();
-    if (token && refreshToken) {
+    if (token) {
       try {
-        await logout(token, refreshToken);
+        await logout(token);
       } catch {
         // best-effort: the local session is cleared regardless
       }

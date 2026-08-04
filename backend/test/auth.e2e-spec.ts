@@ -1,12 +1,23 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { SchedulerRegistry } from '@nestjs/schedule';
+import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Role } from '../generated/prisma/client';
+
+// docs/07 §9 : le refresh token voyage exclusivement via un cookie httpOnly
+// scope a /auth, jamais dans le corps JSON ni lisible par du JS cote client.
+function extractRefreshTokenCookie(res: request.Response): string {
+  const setCookie = res.headers['set-cookie'] as unknown as
+    string[] | undefined;
+  const raw = setCookie?.find((c) => c.startsWith('refreshToken='));
+  if (!raw) throw new Error('refreshToken cookie not set');
+  return raw;
+}
 
 // Critical-path e2e coverage for auth: real HTTP round-trip through the
 // JwtAuthGuard/RolesGuard/ThrottlerGuard stack registered on AppModule,
@@ -30,6 +41,7 @@ describe('Auth (e2e)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
+    app.use(cookieParser());
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -90,22 +102,25 @@ describe('Auth (e2e)', () => {
   });
 
   let accessToken: string;
-  let refreshToken: string;
+  let refreshTokenCookie: string;
 
-  it('logs in successfully and returns an access/refresh token pair', async () => {
+  it('logs in successfully, returns an access token and sets an httpOnly refresh cookie', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/login')
       .send({ email: activeEmail, password })
       .expect(200);
 
     expect(res.body.accessToken).toEqual(expect.any(String));
-    expect(res.body.refreshToken).toEqual(expect.any(String));
+    expect(res.body.refreshToken).toBeUndefined();
     expect(res.body.user).toEqual(
       expect.objectContaining({ id: activeUserId, email: activeEmail }),
     );
 
+    refreshTokenCookie = extractRefreshTokenCookie(res);
+    expect(refreshTokenCookie).toContain('HttpOnly');
+    expect(refreshTokenCookie).toContain('Path=/auth');
+
     accessToken = res.body.accessToken;
-    refreshToken = res.body.refreshToken;
   });
 
   it('rejects /auth/me without a bearer token', async () => {
@@ -123,25 +138,29 @@ describe('Auth (e2e)', () => {
     );
   });
 
-  let rotatedRefreshToken: string;
+  it('rejects /auth/refresh without a refresh cookie', async () => {
+    await request(app.getHttpServer()).post('/auth/refresh').expect(401);
+  });
 
-  it('rotates the refresh token on /auth/refresh', async () => {
+  let rotatedRefreshTokenCookie: string;
+
+  it('rotates the refresh token cookie on /auth/refresh', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken })
+      .set('Cookie', refreshTokenCookie)
       .expect(200);
 
     expect(res.body.accessToken).toEqual(expect.any(String));
-    expect(res.body.refreshToken).toEqual(expect.any(String));
-    expect(res.body.refreshToken).not.toBe(refreshToken);
+    expect(res.body.refreshToken).toBeUndefined();
 
-    rotatedRefreshToken = res.body.refreshToken;
+    rotatedRefreshTokenCookie = extractRefreshTokenCookie(res);
+    expect(rotatedRefreshTokenCookie).not.toBe(refreshTokenCookie);
   });
 
   it('rejects reusing a refresh token that was already rotated', async () => {
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken })
+      .set('Cookie', refreshTokenCookie)
       .expect(401);
   });
 
@@ -149,12 +168,12 @@ describe('Auth (e2e)', () => {
     await request(app.getHttpServer())
       .post('/auth/logout')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ refreshToken: rotatedRefreshToken })
+      .set('Cookie', rotatedRefreshTokenCookie)
       .expect(200);
 
     await request(app.getHttpServer())
       .post('/auth/refresh')
-      .send({ refreshToken: rotatedRefreshToken })
+      .set('Cookie', rotatedRefreshTokenCookie)
       .expect(401);
   });
 });

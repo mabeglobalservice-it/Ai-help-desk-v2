@@ -2,13 +2,16 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.use(cookieParser());
   app.enableCors({
     origin: process.env.FRONTEND_URL ?? 'http://localhost:3002',
+    credentials: true,
   });
   app.useWebSocketAdapter(new IoAdapter(app));
 

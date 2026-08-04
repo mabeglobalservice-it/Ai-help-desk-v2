@@ -1,4 +1,4 @@
-import { clearSession, getRefreshToken, updateTokens } from "./session";
+import { clearSession, updateTokens } from "./session";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -26,18 +26,18 @@ async function parseErrorMessage(response: Response): Promise<string> {
 // the refresh token independently (which would invalidate one another).
 let refreshPromise: Promise<string | null> | null = null;
 
-async function refreshAccessTokenSilently(): Promise<string | null> {
+// The refresh token itself never reaches JS: it lives in an httpOnly cookie
+// (docs/07 §9) sent automatically via `credentials: "include"`. Exported so
+// SessionBootstrap can call it once on app load to restore the access token
+// across a full page reload.
+export async function refreshAccessTokenSilently(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
-
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return null;
 
   refreshPromise = (async () => {
     try {
       const response = await fetch(`${API_URL}/auth/refresh`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
+        credentials: "include",
       });
 
       if (!response.ok) {
@@ -46,8 +46,8 @@ async function refreshAccessTokenSilently(): Promise<string | null> {
         return null;
       }
 
-      const data = (await response.json()) as { accessToken: string; refreshToken: string };
-      updateTokens(data.accessToken, data.refreshToken);
+      const data = (await response.json()) as { accessToken: string };
+      updateTokens(data.accessToken);
       return data.accessToken;
     } catch {
       return null;
@@ -112,7 +112,6 @@ export interface SessionUser {
 
 export interface LoginResponse {
   accessToken: string;
-  refreshToken: string;
   user: SessionUser;
 }
 
@@ -120,6 +119,7 @@ export async function login(email: string, password: string): Promise<LoginRespo
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     body: JSON.stringify({ email, password }),
   });
 
@@ -130,13 +130,14 @@ export async function login(email: string, password: string): Promise<LoginRespo
   return response.json();
 }
 
-// Revokes the given refresh token server-side. Best-effort: callers should
-// clear the local session regardless of whether this succeeds.
-export async function logout(token: string, refreshToken: string): Promise<void> {
+// Revokes the refresh token server-side (read from the httpOnly cookie).
+// Best-effort: callers should clear the local session regardless of whether
+// this succeeds.
+export async function logout(token: string): Promise<void> {
   const response = await fetch(`${API_URL}/auth/logout`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
   });
 
   if (!response.ok) {
