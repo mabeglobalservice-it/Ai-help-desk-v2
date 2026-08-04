@@ -362,9 +362,9 @@ export default function TicketDetailPage() {
     if (token) refreshTicket(token);
   });
 
-  // docs/06-cas-utilisation.md UC-013: passer un ticket à "Résolu" propose
-  // une note de résolution (optionnelle en V1) avant d'envoyer le
-  // changement, plutôt que de l'appliquer immédiatement comme les autres
+  // docs/06-cas-utilisation.md UC-013: passer un ticket à "Résolu" exige une
+  // note de résolution (requise en V2), demandée avant d'envoyer le
+  // changement plutôt que de l'appliquer immédiatement comme les autres
   // transitions de statut.
   async function handleStatusChange(newStatus: TicketStatus) {
     if (newStatus === "RESOLVED") {
@@ -403,7 +403,7 @@ export default function TicketDetailPage() {
     try {
       await updateTicket(token, params.id, {
         status: "RESOLVED",
-        resolutionNote: resolutionNote.trim() || undefined,
+        resolutionNote: resolutionNote.trim(),
       });
       await refreshTicket(token);
       setShowResolvePrompt(false);
@@ -696,7 +696,7 @@ export default function TicketDetailPage() {
                 ) : null}
                 {showResolvePrompt ? (
                   <div className="space-y-2 rounded-md border border-border p-3">
-                    <Label htmlFor="resolution-note">Note de résolution (optionnelle)</Label>
+                    <Label htmlFor="resolution-note">Note de résolution (requise)</Label>
                     <Textarea
                       id="resolution-note"
                       value={resolutionNote}
@@ -706,7 +706,11 @@ export default function TicketDetailPage() {
                       disabled={isUpdatingStatus}
                     />
                     <div className="flex gap-2">
-                      <Button size="sm" onClick={handleConfirmResolve} disabled={isUpdatingStatus}>
+                      <Button
+                        size="sm"
+                        onClick={handleConfirmResolve}
+                        disabled={isUpdatingStatus || !resolutionNote.trim()}
+                      >
                         {isUpdatingStatus ? "Résolution..." : "Confirmer la résolution"}
                       </Button>
                       <Button

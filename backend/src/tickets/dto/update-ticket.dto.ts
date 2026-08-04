@@ -9,7 +9,10 @@ export class UpdateTicketDto extends PartialType(CreateTicketDto) {
   @IsEnum(TicketStatus)
   status?: TicketStatus;
 
-  // docs/06-cas-utilisation.md UC-013: optionnelle en V1, requise en V2.
+  // docs/06-cas-utilisation.md UC-013: requise en V2 pour clôturer un
+  // ticket (statut RESOLVED) — appliqué dans TicketsService.update() plutôt
+  // qu'ici, car la note déjà enregistrée peut suffire si ce PATCH ne fait
+  // que modifier un autre champ d'un ticket déjà résolu.
   @ApiPropertyOptional({
     maxLength: 2000,
     description:

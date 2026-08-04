@@ -448,6 +448,19 @@ export class TicketsService {
     const isResolved = dto.status === TicketStatus.RESOLVED;
     const isStatusChange = !!dto.status && dto.status !== existing.status;
 
+    // docs/06-cas-utilisation.md UC-013 : la note de resolution est requise
+    // en V2. Verifie la valeur finale (nouvelle note fournie, ou celle deja
+    // enregistree) pour ne pas re-exiger une note sur un ticket deja resolu
+    // dont on ne fait que corriger un autre champ.
+    if (isResolved) {
+      const finalNote = dto.resolutionNote ?? existing.resolutionNote;
+      if (!finalNote?.trim()) {
+        throw new BadRequestException(
+          'Une note de résolution est requise pour clôturer un ticket',
+        );
+      }
+    }
+
     // BR-07 correction: a priority change recomputes the SLA deadline from
     // the ticket's original creation time (not from now) using the new
     // priority's policy — otherwise correcting a miscategorized ticket to

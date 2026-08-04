@@ -342,6 +342,54 @@ describe('TicketsService', () => {
       );
     });
 
+    // docs/06-cas-utilisation.md UC-013: "optionnelle en V1, requise en V2"
+    it('rejects resolving a ticket without a resolution note', async () => {
+      await expect(
+        service.update(
+          'tkt-1',
+          { status: TicketStatus.RESOLVED },
+          'sup-1',
+          Role.SUPERVISOR,
+        ),
+      ).rejects.toThrow('Une note de résolution est requise');
+
+      expect(prisma.ticket.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects resolving a ticket with a blank (whitespace-only) resolution note', async () => {
+      await expect(
+        service.update(
+          'tkt-1',
+          { status: TicketStatus.RESOLVED, resolutionNote: '   ' },
+          'sup-1',
+          Role.SUPERVISOR,
+        ),
+      ).rejects.toThrow('Une note de résolution est requise');
+    });
+
+    it('allows re-saving an already-resolved ticket without repeating the existing note', async () => {
+      prisma.ticket.findUnique.mockResolvedValue({
+        ...existing,
+        status: TicketStatus.RESOLVED,
+        resolutionNote: 'Note déjà enregistrée.',
+      });
+      const updated = {
+        ...existing,
+        status: TicketStatus.RESOLVED,
+        resolutionNote: 'Note déjà enregistrée.',
+      };
+      prisma.ticket.update.mockResolvedValue(updated);
+
+      await service.update(
+        'tkt-1',
+        { status: TicketStatus.RESOLVED, priorityId: 'prio-haute' },
+        'sup-1',
+        Role.SUPERVISOR,
+      );
+
+      expect(prisma.ticket.update).toHaveBeenCalled();
+    });
+
     // docs/10-architecture-rag.md §11: la transition vers RESOLVED propose
     // un article de connaissance (jamais indexé sans validation humaine).
     it('proposes a knowledge article when the ticket becomes RESOLVED', async () => {
@@ -350,7 +398,10 @@ describe('TicketsService', () => {
 
       await service.update(
         'tkt-1',
-        { status: TicketStatus.RESOLVED },
+        {
+          status: TicketStatus.RESOLVED,
+          resolutionNote: 'Redémarrage du service a résolu le problème.',
+        },
         'sup-1',
         Role.SUPERVISOR,
       );
