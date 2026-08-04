@@ -19,6 +19,7 @@ describe('Tickets (e2e)', () => {
   const employeeEmail = 'e2e-tickets-employee@test.com';
   const assignedTechEmail = 'e2e-tickets-tech-assigned@test.com';
   const otherTechEmail = 'e2e-tickets-tech-other@test.com';
+  const supervisorEmail = 'e2e-tickets-supervisor@test.com';
   const password = 'CorrectHorseBattery1!';
 
   let employeeId: string;
@@ -31,6 +32,7 @@ describe('Tickets (e2e)', () => {
   let employeeToken: string;
   let assignedTechToken: string;
   let otherTechToken: string;
+  let supervisorToken: string;
 
   async function loginAs(email: string): Promise<string> {
     const res = await request(app.getHttpServer())
@@ -54,7 +56,7 @@ describe('Tickets (e2e)', () => {
     prisma = app.get(PrismaService);
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const [employee, assignedTech, otherTech, category, priority] =
+    const [employee, assignedTech, otherTech, , category, priority] =
       await Promise.all([
         prisma.user.create({
           data: {
@@ -80,6 +82,15 @@ describe('Tickets (e2e)', () => {
             passwordHash,
             displayName: 'E2E Other Technician',
             role: Role.TECHNICIAN,
+            isActive: true,
+          },
+        }),
+        prisma.user.create({
+          data: {
+            email: supervisorEmail,
+            passwordHash,
+            displayName: 'E2E Supervisor',
+            role: Role.SUPERVISOR,
             isActive: true,
           },
         }),
@@ -121,15 +132,22 @@ describe('Tickets (e2e)', () => {
       data: { teamId },
     });
 
-    [employeeToken, assignedTechToken, otherTechToken] = await Promise.all([
-      loginAs(employeeEmail),
-      loginAs(assignedTechEmail),
-      loginAs(otherTechEmail),
-    ]);
+    [employeeToken, assignedTechToken, otherTechToken, supervisorToken] =
+      await Promise.all([
+        loginAs(employeeEmail),
+        loginAs(assignedTechEmail),
+        loginAs(otherTechEmail),
+        loginAs(supervisorEmail),
+      ]);
   });
 
   afterAll(async () => {
-    const userEmails = [employeeEmail, assignedTechEmail, otherTechEmail];
+    const userEmails = [
+      employeeEmail,
+      assignedTechEmail,
+      otherTechEmail,
+      supervisorEmail,
+    ];
     // docs/09-architecture-agents-ia.md §3.3 : POST /tickets/:id/assist
     // persiste une AiConversation par appel (user_id est RESTRICT) — à
     // supprimer avant les utilisateurs, comme pour toute AiConversation de
@@ -392,5 +410,77 @@ describe('Tickets (e2e)', () => {
       const roles = conversation.body.messages.map((m: any) => m.role);
       expect(roles).toEqual(['USER', 'AGENT']);
     }, 30000);
+  });
+
+  // docs/02-brd.md BR-07, §7 "Critères de succès".
+  describe('AI-suggested category/priority (BR-07)', () => {
+    it('persists the AI-suggested category/priority separately from the final ones and includes them in the ticket response', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          categoryId,
+          priorityId: urgentPriorityId, // final priority differs from the AI suggestion below
+          title: 'E2E BR-07 : priorité corrigée manuellement',
+          aiSuggestedCategoryId: categoryId,
+          aiSuggestedPriorityId: priorityId,
+        })
+        .expect(201);
+
+      expect(res.body.aiSuggestedCategoryId).toBe(categoryId);
+      expect(res.body.aiSuggestedPriorityId).toBe(priorityId);
+      expect(res.body.priorityId).toBe(urgentPriorityId);
+
+      await prisma.ticket.delete({ where: { id: res.body.id } });
+    });
+
+    it('leaves the AI-suggested fields null for a purely manual ticket', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          categoryId,
+          priorityId,
+          title: 'E2E BR-07 : ticket créé sans passer par l’IA',
+        })
+        .expect(201);
+
+      expect(res.body.aiSuggestedCategoryId).toBeNull();
+      expect(res.body.aiSuggestedPriorityId).toBeNull();
+
+      await prisma.ticket.delete({ where: { id: res.body.id } });
+    });
+
+    it('surfaces a non-null aiCorrectionRate on the supervisor dashboard once an AI-assisted ticket exists', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/tickets')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          categoryId,
+          priorityId: urgentPriorityId,
+          title:
+            'E2E BR-07 : alimente le taux de correction du tableau de bord',
+          aiSuggestedCategoryId: categoryId,
+          aiSuggestedPriorityId: priorityId,
+        })
+        .expect(201);
+
+      const stats = await request(app.getHttpServer())
+        .get('/dashboard/stats')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+
+      expect(stats.body.aiCorrectionRate).not.toBeNull();
+      expect(typeof stats.body.aiCorrectionRate).toBe('number');
+
+      await prisma.ticket.delete({ where: { id: created.body.id } });
+    });
+
+    it('rejects a non-supervisor/admin from reading the dashboard', async () => {
+      await request(app.getHttpServer())
+        .get('/dashboard/stats')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
   });
 });

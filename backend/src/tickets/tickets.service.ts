@@ -147,6 +147,8 @@ export class TicketsService {
       technicianId,
       ciId: dto.ciId,
       slaDueAt,
+      aiSuggestedCategoryId: dto.aiSuggestedCategoryId,
+      aiSuggestedPriorityId: dto.aiSuggestedPriorityId,
     });
 
     // docs/11-documentation-api.md §13: ticket.created est reçu par le

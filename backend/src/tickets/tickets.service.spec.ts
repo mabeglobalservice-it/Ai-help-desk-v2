@@ -661,6 +661,48 @@ describe('TicketsService', () => {
       );
       expect(result).toBe(created);
     });
+
+    // docs/02-brd.md BR-07 : figé au moment du diagnostic, distinct de
+    // categoryId/priorityId (la valeur finale, potentiellement corrigée).
+    it('persists the AI-suggested category/priority when provided by the DTO', async () => {
+      prisma.ticket.create.mockResolvedValue({
+        id: 'tkt-1',
+        reference: 'TCK-2026-0001',
+        technicianId: null,
+      });
+
+      await service.create(
+        {
+          ...dto,
+          aiSuggestedCategoryId: 'cat-ai-suggested',
+          aiSuggestedPriorityId: 'prio-ai-suggested',
+        },
+        'emp-1',
+      );
+
+      expect(prisma.ticket.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            aiSuggestedCategoryId: 'cat-ai-suggested',
+            aiSuggestedPriorityId: 'prio-ai-suggested',
+          }),
+        }),
+      );
+    });
+
+    it('leaves the AI-suggested fields undefined for a purely manual ticket', async () => {
+      prisma.ticket.create.mockResolvedValue({
+        id: 'tkt-1',
+        reference: 'TCK-2026-0001',
+        technicianId: null,
+      });
+
+      await service.create(dto, 'emp-1');
+
+      const call = prisma.ticket.create.mock.calls[0][0];
+      expect(call.data.aiSuggestedCategoryId).toBeUndefined();
+      expect(call.data.aiSuggestedPriorityId).toBeUndefined();
+    });
   });
 
   describe('suggestTechnician', () => {

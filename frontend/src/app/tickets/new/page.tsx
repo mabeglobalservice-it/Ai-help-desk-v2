@@ -59,6 +59,12 @@ export default function NewTicketPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiDegraded, setAiDegraded] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // docs/02-brd.md BR-07 : suggestion IA figée au moment du diagnostic —
+  // ne suit PAS categoryId/priorityId si l'employé modifie ensuite les
+  // listes déroulantes, pour que la comparaison finale reflète une vraie
+  // correction manuelle.
+  const [aiSuggestedCategoryId, setAiSuggestedCategoryId] = useState<string | null>(null);
+  const [aiSuggestedPriorityId, setAiSuggestedPriorityId] = useState<string | null>(null);
 
   // docs/06-cas-utilisation.md UC-015 ("Résolution automatique")
   const [autoResolveProposal, setAutoResolveProposal] = useState<AutoResolveProposal | null>(null);
@@ -128,6 +134,8 @@ export default function NewTicketPage() {
         summary: summary || undefined,
         ciId: ciId === NO_CI ? undefined : ciId,
         conversationId: linkedConversationId ?? undefined,
+        aiSuggestedCategoryId: aiSuggestedCategoryId ?? undefined,
+        aiSuggestedPriorityId: aiSuggestedPriorityId ?? undefined,
       });
       router.push("/tickets");
     } catch (err) {
@@ -158,6 +166,8 @@ export default function NewTicketPage() {
       setTitle(diagnosis.title);
       setCategoryId(diagnosis.categoryId);
       setPriorityId(diagnosis.priorityId);
+      setAiSuggestedCategoryId(diagnosis.categoryId);
+      setAiSuggestedPriorityId(diagnosis.priorityId);
       setAiDegraded(diagnosis.degraded);
       setAutoResolveProposal(proposal);
     } catch (err) {
@@ -285,6 +295,8 @@ export default function NewTicketPage() {
       setTitle(chatDiagnosis.title);
       setCategoryId(chatDiagnosis.categoryId);
       setPriorityId(chatDiagnosis.priorityId);
+      setAiSuggestedCategoryId(chatDiagnosis.categoryId);
+      setAiSuggestedPriorityId(chatDiagnosis.priorityId);
       setSummary(
         `${chatDiagnosis.causeProbable}\n\nÉtapes déjà essayées sans succès :\n${chatDiagnosis.suggestedSteps
           .map((step, i) => `${i + 1}. ${step}`)

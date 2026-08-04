@@ -52,7 +52,7 @@ function formatResolutionTime(hours: number | null): string {
   return `${(hours / 24).toFixed(1)} j`;
 }
 
-function formatSlaComplianceRate(rate: number | null): string {
+function formatPercentage(rate: number | null): string {
   if (rate === null) return "—";
   return `${rate.toFixed(1)} %`;
 }
@@ -227,12 +227,12 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground">Chargement des statistiques...</p>
         ) : (
           <div className="flex flex-col gap-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <Card>
                 <CardHeader>
                   <CardDescription>SLA respecté</CardDescription>
                   <CardTitle className="text-3xl">
-                    {formatSlaComplianceRate(stats.slaComplianceRate)}
+                    {formatPercentage(stats.slaComplianceRate)}
                   </CardTitle>
                 </CardHeader>
               </Card>
@@ -253,6 +253,14 @@ export default function DashboardPage() {
                   <CardDescription>Temps moyen de résolution</CardDescription>
                   <CardTitle className="text-3xl">
                     {formatResolutionTime(stats.averageResolutionHours)}
+                  </CardTitle>
+                </CardHeader>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardDescription>Correction manuelle IA</CardDescription>
+                  <CardTitle className="text-3xl">
+                    {formatPercentage(stats.aiCorrectionRate)}
                   </CardTitle>
                 </CardHeader>
               </Card>

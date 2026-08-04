@@ -100,4 +100,92 @@ describe('DashboardService', () => {
       expect(stats.slaComplianceRate).toBe(100);
     });
   });
+
+  // docs/02-brd.md BR-07, §7 "Critères de succès". `findMany` is mocked
+  // per-call here (routed on `where.status`) since the real service issues
+  // two independent findMany calls — one for resolved tickets (SLA
+  // compliance), one for AI-assisted tickets (this metric) — and a single
+  // shared mock would conflate the two fixtures.
+  describe('aiCorrectionRate', () => {
+    function mockAiAssistedTickets(tickets: unknown[]) {
+      prisma.ticket.findMany.mockImplementation((args: any) => {
+        if (args?.where?.status === 'RESOLVED') return Promise.resolve([]);
+        return Promise.resolve(tickets);
+      });
+    }
+
+    it('is null when no ticket in the period came from the AI-assisted flow', async () => {
+      mockAiAssistedTickets([]);
+
+      const stats = await service.getStats({});
+
+      expect(stats.aiCorrectionRate).toBeNull();
+    });
+
+    it('counts a ticket as corrected when the final category differs from the AI suggestion', async () => {
+      mockAiAssistedTickets([
+        {
+          categoryId: 'cat-materiel',
+          priorityId: 'prio-moyenne',
+          aiSuggestedCategoryId: 'cat-logiciel',
+          aiSuggestedPriorityId: 'prio-moyenne',
+        },
+      ]);
+
+      const stats = await service.getStats({});
+
+      expect(stats.aiCorrectionRate).toBe(100);
+    });
+
+    it('counts a ticket as corrected when only the final priority differs from the AI suggestion', async () => {
+      mockAiAssistedTickets([
+        {
+          categoryId: 'cat-materiel',
+          priorityId: 'prio-urgente',
+          aiSuggestedCategoryId: 'cat-materiel',
+          aiSuggestedPriorityId: 'prio-moyenne',
+        },
+      ]);
+
+      const stats = await service.getStats({});
+
+      expect(stats.aiCorrectionRate).toBe(100);
+    });
+
+    it('does not count a ticket as corrected when category and priority both match the suggestion', async () => {
+      mockAiAssistedTickets([
+        {
+          categoryId: 'cat-materiel',
+          priorityId: 'prio-moyenne',
+          aiSuggestedCategoryId: 'cat-materiel',
+          aiSuggestedPriorityId: 'prio-moyenne',
+        },
+      ]);
+
+      const stats = await service.getStats({});
+
+      expect(stats.aiCorrectionRate).toBe(0);
+    });
+
+    it('computes a mixed rate across several AI-assisted tickets', async () => {
+      mockAiAssistedTickets([
+        {
+          categoryId: 'cat-materiel',
+          priorityId: 'prio-moyenne',
+          aiSuggestedCategoryId: 'cat-materiel',
+          aiSuggestedPriorityId: 'prio-moyenne',
+        },
+        {
+          categoryId: 'cat-logiciel',
+          priorityId: 'prio-moyenne',
+          aiSuggestedCategoryId: 'cat-materiel',
+          aiSuggestedPriorityId: 'prio-moyenne',
+        },
+      ]);
+
+      const stats = await service.getStats({});
+
+      expect(stats.aiCorrectionRate).toBe(50);
+    });
+  });
 });

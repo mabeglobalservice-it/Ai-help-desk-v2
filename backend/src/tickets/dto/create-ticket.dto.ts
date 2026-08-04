@@ -41,4 +41,18 @@ export class CreateTicketDto {
   @IsOptional()
   @IsUUID()
   conversationId?: string;
+
+  // docs/02-brd.md BR-07 : catégorie/priorité suggérée par l'IA au moment
+  // du diagnostic (ai-diagnose ou diagnostic conversationnel), figée avant
+  // toute modification manuelle du formulaire — alimente le taux de
+  // correction manuelle du tableau de bord (DashboardService).
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  aiSuggestedCategoryId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  aiSuggestedPriorityId?: string;
 }

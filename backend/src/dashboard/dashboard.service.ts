@@ -26,6 +26,13 @@ export interface DashboardStatsResult {
   // on or before slaDueAt. null when no resolved ticket in the period had
   // an SLA target (never claims a misleading 0%/100%).
   slaComplianceRate: number | null;
+  // docs/02-brd.md BR-07, §7 "Critères de succès" : pourcentage (0-100)
+  // des tickets issus du flux IA (aiSuggestedCategoryId/PriorityId non
+  // nuls) dont la catégorie ou la priorité finale diffère de la
+  // suggestion — quel que soit le moment de la correction (formulaire
+  // avant création, ou PATCH ultérieur). null si aucun ticket issu du
+  // flux IA dans la période (jamais un 0%/100% trompeur).
+  aiCorrectionRate: number | null;
   byCategory: { categoryId: string; categoryName: string; count: number }[];
   byTechnician: {
     technicianId: string;
@@ -123,6 +130,7 @@ export class DashboardService {
       categoryCounts,
       technicianCounts,
       categories,
+      aiAssistedTickets,
     ] = await Promise.all([
       this.prisma.ticket.count({
         where: { ...dateWhere, status: { in: OPEN_STATUSES } },
@@ -149,6 +157,21 @@ export class DashboardService {
         _count: { _all: true },
       }),
       this.prisma.ticketCategory.findMany({ select: { id: true, name: true } }),
+      this.prisma.ticket.findMany({
+        where: {
+          ...dateWhere,
+          OR: [
+            { aiSuggestedCategoryId: { not: null } },
+            { aiSuggestedPriorityId: { not: null } },
+          ],
+        },
+        select: {
+          categoryId: true,
+          priorityId: true,
+          aiSuggestedCategoryId: true,
+          aiSuggestedPriorityId: true,
+        },
+      }),
     ]);
 
     const averageResolutionHours = resolvedTickets.length
@@ -170,6 +193,16 @@ export class DashboardService {
             ticket.resolvedAt!.getTime() <= ticket.slaDueAt!.getTime(),
         ).length /
           ticketsWithSla.length) *
+        100
+      : null;
+
+    const aiCorrectionRate = aiAssistedTickets.length
+      ? (aiAssistedTickets.filter(
+          (ticket) =>
+            ticket.categoryId !== ticket.aiSuggestedCategoryId ||
+            ticket.priorityId !== ticket.aiSuggestedPriorityId,
+        ).length /
+          aiAssistedTickets.length) *
         100
       : null;
 
@@ -211,6 +244,7 @@ export class DashboardService {
       totalResolved,
       averageResolutionHours,
       slaComplianceRate,
+      aiCorrectionRate,
       byCategory,
       byTechnician,
     };
@@ -227,6 +261,9 @@ export class DashboardService {
     );
     lines.push(
       `Taux de respect des SLA (%),${stats.slaComplianceRate !== null ? stats.slaComplianceRate.toFixed(1) : ''}`,
+    );
+    lines.push(
+      `Taux de correction manuelle IA (%),${stats.aiCorrectionRate !== null ? stats.aiCorrectionRate.toFixed(1) : ''}`,
     );
     lines.push('');
 
@@ -281,6 +318,13 @@ export class DashboardService {
         `Taux de respect des SLA : ${
           stats.slaComplianceRate !== null
             ? `${stats.slaComplianceRate.toFixed(1)} %`
+            : '—'
+        }`,
+      );
+      doc.text(
+        `Taux de correction manuelle IA : ${
+          stats.aiCorrectionRate !== null
+            ? `${stats.aiCorrectionRate.toFixed(1)} %`
             : '—'
         }`,
       );

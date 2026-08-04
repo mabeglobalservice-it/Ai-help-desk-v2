@@ -129,6 +129,13 @@ model Ticket {
   rating              Int?
   ratingComment       String?            @map("rating_comment")
   ratedAt             DateTime?          @map("rated_at")
+  // docs/02-brd.md BR-07, §7 "Critères de succès" : capture la suggestion
+  // de l'IA au moment de la création (avant toute correction humaine), pour
+  // calculer le taux de correction manuelle sans journal d'audit séparé —
+  // référence informative sans contrainte FK (comme AuditLog.actorId ou
+  // DocumentChunk.ticketId), null si le ticket n'est pas issu du flux IA.
+  aiSuggestedCategoryId String?          @map("ai_suggested_category_id")
+  aiSuggestedPriorityId String?          @map("ai_suggested_priority_id")
 
   statusHistory     TicketStatusHistory[]
   comments          TicketComment[]

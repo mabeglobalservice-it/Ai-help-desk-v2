@@ -755,6 +755,11 @@ export interface CreateTicketInput {
   summary?: string;
   ciId?: string;
   conversationId?: string;
+  // docs/02-brd.md BR-07 : catégorie/priorité suggérée par l'IA, figée au
+  // moment du diagnostic — alimente le taux de correction manuelle du
+  // tableau de bord. Omis quand le ticket n'est pas issu du flux IA.
+  aiSuggestedCategoryId?: string;
+  aiSuggestedPriorityId?: string;
 }
 
 export function createTicket(token: string, input: CreateTicketInput): Promise<Ticket> {
@@ -1012,6 +1017,10 @@ export interface DashboardStats {
   totalResolved: number;
   averageResolutionHours: number | null;
   slaComplianceRate: number | null;
+  // docs/02-brd.md BR-07 : % des tickets issus du flux IA dont la
+  // catégorie/priorité finale diffère de la suggestion. null si aucun
+  // ticket issu du flux IA sur la période.
+  aiCorrectionRate: number | null;
   byCategory: { categoryId: string; categoryName: string; count: number }[];
   byTechnician: { technicianId: string; technicianName: string; count: number }[];
 }
