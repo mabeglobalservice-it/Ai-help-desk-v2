@@ -765,3 +765,40 @@ model TechnicianSpecialty {
   @@unique([userId, categoryId])
   @@map("technician_specialties")
 }
+
+// docs/11-documentation-api.md §12 (Module Administration), docs/08-schema-
+// base-de-donnees.md §2 (domaine Configuration : system_settings). Table
+// singleton (id figé) : un seul enregistrement pour toute l'application.
+// Ne couvre que des réglages réellement câblés ailleurs dans le code
+// (branding des emails, longueur du dialogue de l'Agent Help Desk) — pas
+// un fourre-tout de configuration hypothétique.
+model SystemSettings {
+  id                 String   @id @default("singleton")
+  organizationName   String   @default("AI Help Desk") @map("organization_name")
+  // docs/09-architecture-agents-ia.md §3.2 : nombre maximal de questions de
+  // clarification avant que l'Agent Help Desk ne soit forcé de diagnostiquer
+  // (AiService.converseDiagnostic) — était une constante en dur.
+  maxClarifyingTurns Int      @default(3) @map("max_clarifying_turns")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+// docs/11-documentation-api.md §12 (GET/PATCH /admin/integrations) :
+// uniquement les intégrations réellement câblées dans ce projet (Teams,
+// Slack, Email) — Microsoft Graph et Intune (docs/03 §3.4/§3.5) n'existent
+// pas encore et sont déclarés tels quels par AdminService, sans ligne ici.
+enum IntegrationName {
+  TEAMS
+  SLACK
+  EMAIL
+}
+
+model IntegrationConfig {
+  id        String           @id @default(uuid())
+  name      IntegrationName  @unique
+  isEnabled Boolean          @default(true) @map("is_enabled")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  @@map("integration_configs")
+}

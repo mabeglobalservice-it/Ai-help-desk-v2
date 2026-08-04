@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { IntegrationName } from '../../generated/prisma/client';
 
 interface SendChatNotificationInput {
   message: string;
@@ -23,12 +25,26 @@ export class ChatNotificationsService {
   private readonly teamsWebhookUrl = process.env.TEAMS_WEBHOOK_URL || null;
   private readonly slackWebhookUrl = process.env.SLACK_WEBHOOK_URL || null;
 
+  constructor(private readonly prisma: PrismaService) {}
+
   async sendNotification(input: SendChatNotificationInput): Promise<void> {
     await Promise.all([this.postToTeams(input), this.postToSlack(input)]);
   }
 
+  // docs/11-documentation-api.md §12 (GET/PATCH /admin/integrations) :
+  // absence de ligne = activé par défaut (comportement historique avant
+  // l'ajout de ce toggle), seul un enregistrement isEnabled=false le
+  // désactive explicitement.
+  private async isIntegrationEnabled(name: IntegrationName): Promise<boolean> {
+    const config = await this.prisma.integrationConfig.findUnique({
+      where: { name },
+    });
+    return config?.isEnabled ?? true;
+  }
+
   private async postToTeams(input: SendChatNotificationInput): Promise<void> {
     if (!this.teamsWebhookUrl) return;
+    if (!(await this.isIntegrationEnabled(IntegrationName.TEAMS))) return;
 
     try {
       const response = await fetch(this.teamsWebhookUrl, {
@@ -56,6 +72,7 @@ export class ChatNotificationsService {
 
   private async postToSlack(input: SendChatNotificationInput): Promise<void> {
     if (!this.slackWebhookUrl) return;
+    if (!(await this.isIntegrationEnabled(IntegrationName.SLACK))) return;
 
     try {
       const response = await fetch(this.slackWebhookUrl, {

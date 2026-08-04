@@ -200,7 +200,10 @@ const HELPDESK_SYSTEM_PROMPT =
   "catégorie et la priorité parmi celles fournies. Ne pose jamais plus d'une question par tour. Ne " +
   "fabrique jamais de détails sur l'environnement technique de l'organisation que tu ne connais pas.";
 
-const MAX_CLARIFYING_TURNS = 3;
+// docs/11-documentation-api.md §12 (GET/PATCH /admin/settings) : valeur par
+// défaut si la table system_settings n'a pas encore été seedée — le nombre
+// réellement utilisé est lu en base à chaque appel (getMaxClarifyingTurns).
+const DEFAULT_MAX_CLARIFYING_TURNS = 3;
 
 const DEGRADED_SUGGESTED_STEPS = [
   "Redémarrez l'appareil ou l'application concernée.",
@@ -713,7 +716,8 @@ export class AiService {
     const userTurns = history.filter(
       (m) => m.role === AiMessageRole.USER,
     ).length;
-    const forceDiagnosis = userTurns >= MAX_CLARIFYING_TURNS;
+    const maxClarifyingTurns = await this.getMaxClarifyingTurns();
+    const forceDiagnosis = userTurns >= maxClarifyingTurns;
 
     const { enabled, agentId } = await this.checkAgentStatus(
       AiAgentName.HELPDESK,
@@ -797,6 +801,15 @@ export class AiService {
         priorities,
       );
     }
+  }
+
+  // docs/11-documentation-api.md §12 (GET/PATCH /admin/settings) : repli sur
+  // DEFAULT_MAX_CLARIFYING_TURNS tant que system_settings n'a pas été seedé.
+  private async getMaxClarifyingTurns(): Promise<number> {
+    const settings = await this.prisma.systemSettings.findUnique({
+      where: { id: 'singleton' },
+    });
+    return settings?.maxClarifyingTurns ?? DEFAULT_MAX_CLARIFYING_TURNS;
   }
 
   private async getOrStartConversation(

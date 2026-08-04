@@ -73,6 +73,15 @@ const aiProviders = [
   { provider: 'AZURE_OPENAI', isActive: false },
 ] as const;
 
+// docs/11-documentation-api.md §12 (GET/PATCH /admin/integrations) :
+// activées par défaut — les webhooks/clés réels restent lus depuis les
+// variables d'environnement, seule l'activation est stockée ici.
+const integrations = [
+  { name: 'TEAMS', isEnabled: true },
+  { name: 'SLACK', isEnabled: true },
+  { name: 'EMAIL', isEnabled: true },
+] as const;
+
 async function main() {
   for (const name of categories) {
     await prisma.ticketCategory.upsert({
@@ -122,6 +131,20 @@ async function main() {
       create: providerConfig,
     });
   }
+
+  for (const integration of integrations) {
+    await prisma.integrationConfig.upsert({
+      where: { name: integration.name },
+      update: {},
+      create: integration,
+    });
+  }
+
+  await prisma.systemSettings.upsert({
+    where: { id: 'singleton' },
+    update: {},
+    create: { id: 'singleton' },
+  });
 }
 
 main()

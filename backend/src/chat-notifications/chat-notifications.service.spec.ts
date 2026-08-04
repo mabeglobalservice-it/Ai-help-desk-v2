@@ -4,12 +4,22 @@ import { ChatNotificationsService } from './chat-notifications.service';
 describe('ChatNotificationsService', () => {
   const originalEnv = { ...process.env };
   let fetchMock: jest.Mock;
+  let prisma: { integrationConfig: { findUnique: jest.Mock } };
+
+  function buildService(): ChatNotificationsService {
+    return new ChatNotificationsService(prisma as any);
+  }
 
   beforeEach(() => {
     fetchMock = jest
       .fn()
       .mockResolvedValue({ ok: true, text: () => Promise.resolve('') });
     global.fetch = fetchMock;
+    // docs/11-documentation-api.md §12: absent by default (no seeded row)
+    // is treated as "enabled" — tests that need it disabled override this.
+    prisma = {
+      integrationConfig: { findUnique: jest.fn().mockResolvedValue(null) },
+    };
   });
 
   afterEach(() => {
@@ -20,7 +30,7 @@ describe('ChatNotificationsService', () => {
   it('sends nothing when neither webhook is configured', async () => {
     delete process.env.TEAMS_WEBHOOK_URL;
     delete process.env.SLACK_WEBHOOK_URL;
-    const service = new ChatNotificationsService();
+    const service = buildService();
 
     await service.sendNotification({ message: 'Ticket assigné' });
 
@@ -30,7 +40,7 @@ describe('ChatNotificationsService', () => {
   it('posts a MessageCard to the configured Teams webhook', async () => {
     process.env.TEAMS_WEBHOOK_URL = 'https://teams.example.com/webhook';
     delete process.env.SLACK_WEBHOOK_URL;
-    const service = new ChatNotificationsService();
+    const service = buildService();
 
     await service.sendNotification({
       message: 'Ticket assigné',
@@ -46,10 +56,24 @@ describe('ChatNotificationsService', () => {
     expect(body.text).toContain('https://app.example.com/tickets/1');
   });
 
+  // docs/11-documentation-api.md §12 (PATCH /admin/integrations/:name).
+  it('skips Teams when the integration is disabled by an Admin, even with a webhook configured', async () => {
+    process.env.TEAMS_WEBHOOK_URL = 'https://teams.example.com/webhook';
+    delete process.env.SLACK_WEBHOOK_URL;
+    prisma.integrationConfig.findUnique.mockResolvedValue({
+      isEnabled: false,
+    });
+    const service = buildService();
+
+    await service.sendNotification({ message: 'Ticket assigné' });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('posts a text payload to the configured Slack webhook', async () => {
     delete process.env.TEAMS_WEBHOOK_URL;
     process.env.SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/xyz';
-    const service = new ChatNotificationsService();
+    const service = buildService();
 
     await service.sendNotification({ message: 'SLA dépassé' });
 
@@ -64,7 +88,7 @@ describe('ChatNotificationsService', () => {
     process.env.TEAMS_WEBHOOK_URL = 'https://teams.example.com/webhook';
     process.env.SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/xyz';
     fetchMock.mockRejectedValue(new Error('network down'));
-    const service = new ChatNotificationsService();
+    const service = buildService();
 
     await expect(
       service.sendNotification({ message: 'Ticket assigné' }),
@@ -79,7 +103,7 @@ describe('ChatNotificationsService', () => {
       status: 400,
       text: () => Promise.resolve('bad request'),
     });
-    const service = new ChatNotificationsService();
+    const service = buildService();
 
     await expect(
       service.sendNotification({ message: 'Ticket assigné' }),

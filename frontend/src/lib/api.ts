@@ -1283,6 +1283,55 @@ export function getAiConversationCost(
   );
 }
 
+// docs/11-documentation-api.md §12 (Module Administration), docs/06-cas-
+// utilisation.md UC-030.
+export interface SystemSettings {
+  id: string;
+  organizationName: string;
+  maxClarifyingTurns: number;
+  updatedAt: string;
+}
+
+export function getSystemSettings(token: string): Promise<SystemSettings> {
+  return apiFetch<SystemSettings>("/admin/settings", token);
+}
+
+export function updateSystemSettings(
+  token: string,
+  input: { organizationName?: string; maxClarifyingTurns?: number },
+): Promise<SystemSettings> {
+  return apiFetch<SystemSettings>("/admin/settings", token, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface IntegrationStatus {
+  name: string;
+  label: string;
+  configured: boolean;
+  enabled: boolean;
+}
+
+export function getIntegrations(token: string): Promise<IntegrationStatus[]> {
+  return apiFetch<IntegrationStatus[]>("/admin/integrations", token);
+}
+
+export function setIntegrationEnabled(
+  token: string,
+  name: string,
+  isEnabled: boolean,
+): Promise<{ name: string; isEnabled: boolean }> {
+  return apiFetch<{ name: string; isEnabled: boolean }>(
+    `/admin/integrations/${name}`,
+    token,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ isEnabled }),
+    },
+  );
+}
+
 // docs/11-documentation-api.md §5 : historique et feedback d'une
 // conversation de diagnostic (docs/08 §4.4).
 export type AiMessageRole = "USER" | "AGENT";

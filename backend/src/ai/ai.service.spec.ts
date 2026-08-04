@@ -13,6 +13,7 @@ describe('AiService', () => {
     aiProviderConfig: { findUnique: jest.Mock };
     aiConversation: { create: jest.Mock; findUnique: jest.Mock };
     aiMessage: { create: jest.Mock };
+    systemSettings: { findUnique: jest.Mock };
   };
   const originalApiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -43,6 +44,9 @@ describe('AiService', () => {
         findUnique: jest.fn(),
       },
       aiMessage: { create: jest.fn().mockResolvedValue({ id: 'msg-1' }) },
+      // docs/11-documentation-api.md §12: absent by default (no seeded
+      // row) falls back to DEFAULT_MAX_CLARIFYING_TURNS.
+      systemSettings: { findUnique: jest.fn().mockResolvedValue(null) },
     };
 
     service = await buildService();
