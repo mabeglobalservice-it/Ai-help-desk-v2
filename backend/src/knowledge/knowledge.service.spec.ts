@@ -10,6 +10,13 @@ import { AiService } from '../ai/ai.service';
 import { KnowledgeArticleStatus, Role } from '../../generated/prisma/client';
 import { embed } from './rag/embedding.util';
 
+// docs/06-cas-utilisation.md RM-05 : ce fichier teste KnowledgeService avec
+// le vectoriseur en mode dégradé (hashing trick) — aucune clé Voyage AI
+// n'est configurée dans l'environnement de test, embed() y retombe donc
+// systématiquement sur le repli local. La couverture spécifique à Voyage AI
+// (succès, échec, absence de clé) vit dans
+// src/knowledge/rag/embedding.util.spec.ts.
+
 describe('KnowledgeService', () => {
   let service: KnowledgeService;
   let prisma: {
@@ -135,9 +142,10 @@ describe('KnowledgeService', () => {
           knowledgeLevel: 3,
           ownerId: null,
           content: 'Imprimante réseau bloquée, redémarrage du spouleur',
-          embedding: embed(
+          embedding: await embed(
             'Imprimante réseau bloquée, redémarrage du spouleur',
           ),
+          embeddingProvider: 'HASHING',
         },
         {
           id: 'chunk-unrelated',
@@ -148,7 +156,8 @@ describe('KnowledgeService', () => {
           knowledgeLevel: 3,
           ownerId: null,
           content: 'Écran bleu, mise à jour du pilote graphique',
-          embedding: embed('Écran bleu, mise à jour du pilote graphique'),
+          embedding: await embed('Écran bleu, mise à jour du pilote graphique'),
+          embeddingProvider: 'HASHING',
         },
       ]);
       prisma.ticket.findMany.mockResolvedValue([
@@ -188,7 +197,8 @@ describe('KnowledgeService', () => {
           knowledgeLevel: 3,
           ownerId: null,
           content: 'Écran bleu, mise à jour du pilote graphique',
-          embedding: embed('Écran bleu, mise à jour du pilote graphique'),
+          embedding: await embed('Écran bleu, mise à jour du pilote graphique'),
+          embeddingProvider: 'HASHING',
         },
       ]);
 
@@ -212,7 +222,8 @@ describe('KnowledgeService', () => {
           knowledgeLevel: 3,
           ownerId: null,
           content: 'Imprimante réseau bloquée',
-          embedding: embed('Imprimante réseau bloquée'),
+          embedding: await embed('Imprimante réseau bloquée'),
+          embeddingProvider: 'HASHING',
         },
       ]);
       prisma.ticket.findMany.mockResolvedValue([
@@ -252,9 +263,10 @@ describe('KnowledgeService', () => {
           knowledgeLevel: 3,
           ownerId: null,
           content: 'Imprimante réseau bloquée, redémarrage du spouleur',
-          embedding: embed(
+          embedding: await embed(
             'Imprimante réseau bloquée, redémarrage du spouleur',
           ),
+          embeddingProvider: 'HASHING',
         },
       ]);
       prisma.ticket.findMany.mockResolvedValue([
@@ -277,6 +289,55 @@ describe('KnowledgeService', () => {
       expect(result.results[0].rank).toBeGreaterThanOrEqual(0.4);
       expect(result.lowConfidence).toBe(false);
     });
+
+    // rag/embedding.util.ts : un chunk indexé via Voyage AI (1024 dims) et
+    // une requête embeddée via le hashing trick (256 dims, mode dégradé
+    // sans clé) ne sont jamais comparables par similarité cosinus — sans ce
+    // garde-fou, comparer des vecteurs de tailles différentes produirait un
+    // score sans signification (voire un plantage selon l'implémentation).
+    it('never compares a chunk from a different embedding provider by cosine similarity, only lexical overlap', async () => {
+      const voyageVector = new Array(1024).fill(0);
+      voyageVector[0] = 1;
+      prisma.documentChunk.findMany.mockResolvedValue([
+        {
+          id: 'chunk-voyage',
+          documentId: null,
+          ticketId: 'tkt-1',
+          knowledgeArticleId: null,
+          scriptId: null,
+          knowledgeLevel: 3,
+          ownerId: null,
+          content: 'Imprimante réseau bloquée, redémarrage du spouleur',
+          embedding: voyageVector,
+          embeddingProvider: 'VOYAGE',
+        },
+      ]);
+      prisma.ticket.findMany.mockResolvedValue([
+        {
+          id: 'tkt-1',
+          reference: 'TCK-0001',
+          title: 'Imprimante bloquée',
+          summary: null,
+          resolvedAt: new Date('2026-01-01'),
+          category: { name: 'Matériel' },
+          priority: { name: 'Moyenne' },
+        },
+      ]);
+
+      // No VOYAGE_API_KEY configured in this test env, so the query is
+      // embedded via the hashing trick (provider HASHING) — mismatched
+      // against the chunk above (provider VOYAGE).
+      const result = await service.search(
+        'imprimante réseau bloquée redémarrage spouleur',
+        { userId: 'tech-1', role: Role.TECHNICIAN },
+      );
+
+      // Strong lexical overlap alone (LEXICAL_WEIGHT 0.4, full match) still
+      // clears RELEVANCE_THRESHOLD (0.2), but the cosine contribution must
+      // be exactly 0 — not a value computed from two incompatible vectors.
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].rank).toBeCloseTo(0.4, 5);
+    });
   });
 
   describe('createDocument', () => {
@@ -297,6 +358,13 @@ describe('KnowledgeService', () => {
             ownerId: 'tech-1',
           }),
         }),
+      );
+      // rag/embedding.util.ts : aucune clé Voyage AI dans cet environnement
+      // de test — chaque chunk indexé doit tracer le repli local (RM-05).
+      expect(prisma.documentChunk.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ embeddingProvider: 'HASHING' }),
+        }) as unknown,
       );
     });
 
@@ -578,7 +646,11 @@ describe('KnowledgeService', () => {
           data: expect.objectContaining({
             knowledgeArticleId: 'article-1',
             knowledgeLevel: 2,
-          }),
+            // rag/embedding.util.ts : aucune clé Voyage AI dans cet
+            // environnement de test — le repli local (RM-05) doit être
+            // explicitement tracé sur le chunk stocké (doc 10 §9).
+            embeddingProvider: 'HASHING',
+          }) as unknown,
         }),
       );
       expect(result.status).toBe(KnowledgeArticleStatus.APPROVED);

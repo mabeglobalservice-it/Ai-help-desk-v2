@@ -14,7 +14,7 @@ import { AiService } from '../ai/ai.service';
 import { chunkText } from './rag/chunking.util';
 import {
   cosineSimilarity,
-  embed,
+  embedWithProvider,
   lexicalOverlap,
   tokenize,
 } from './rag/embedding.util';
@@ -115,11 +115,13 @@ function buildSnippet(content: string, queryTokens: string[]): string {
 // résolus, automatisation, personnel), chacun avec ses propres règles
 // d'accès et de confiance. DocumentChunk est l'unité de recherche unifiée
 // pour les 5 niveaux — voir prisma/schema.prisma pour le détail. Aucune
-// extension pgvector disponible sur cette instance Postgres locale ni de
-// clé API d'un fournisseur d'embeddings configurée : la recherche
-// sémantique utilise un vectoriseur déterministe local (rag/embedding.util,
-// mode dégradé RM-05), combinée à un recouvrement lexical (reranking, doc
-// §8) pour la robustesse.
+// extension pgvector disponible sur cette instance Postgres locale : la
+// similarité vectorielle est calculée en application (voir search()),
+// combinée à un recouvrement lexical (reranking, doc §8) pour la robustesse.
+// Les embeddings eux-mêmes viennent de Voyage AI si VOYAGE_API_KEY est
+// configurée, sinon d'un vectoriseur déterministe local en repli (RM-05) —
+// voir rag/embedding.util.ts pour le détail et pourquoi les deux ne sont
+// jamais comparés entre eux.
 @Injectable()
 export class KnowledgeService {
   constructor(
@@ -135,7 +137,8 @@ export class KnowledgeService {
     requester: Requester,
   ): Promise<KnowledgeSearchResponse> {
     const queryTokens = tokenize(query);
-    const queryVector = embed(query);
+    const { vector: queryVector, provider: queryProvider } =
+      await embedWithProvider(query);
 
     const levels = ROLE_LEVELS[requester.role];
     const where: Prisma.DocumentChunkWhereInput =
@@ -156,7 +159,14 @@ export class KnowledgeService {
 
     const scored = candidates
       .map((chunk) => {
-        const cosine = cosineSimilarity(queryVector, chunk.embedding);
+        // rag/embedding.util.ts : un chunk hashing (256 dims) et un chunk
+        // Voyage (1024 dims) ne sont jamais comparables — un chunk d'un
+        // autre fournisseur que la requête courante n'a pas de signal
+        // cosinus valide, seul le recouvrement lexical s'applique.
+        const cosine =
+          chunk.embeddingProvider === queryProvider
+            ? cosineSimilarity(queryVector, chunk.embedding)
+            : 0;
         const lexical = lexicalOverlap(queryTokens, tokenize(chunk.content));
         const score = COSINE_WEIGHT * cosine + LEXICAL_WEIGHT * lexical;
         return { chunk, score };
@@ -415,8 +425,9 @@ export class KnowledgeService {
   ) {
     const chunks = chunkText(`${title}\n\n${content}`);
     await Promise.all(
-      chunks.map((chunkContent, position) =>
-        this.prisma.documentChunk.create({
+      chunks.map(async (chunkContent, position) => {
+        const { vector, provider } = await embedWithProvider(chunkContent);
+        return this.prisma.documentChunk.create({
           data: {
             documentId,
             knowledgeLevel,
@@ -424,10 +435,11 @@ export class KnowledgeService {
             sourceLabel: title,
             content: chunkContent,
             position,
-            embedding: embed(chunkContent),
+            embedding: vector,
+            embeddingProvider: provider,
           },
-        }),
-      ),
+        });
+      }),
     );
   }
 
@@ -445,6 +457,7 @@ export class KnowledgeService {
     const content = [ticket.title, ticket.summary, ticket.resolutionNote]
       .filter(Boolean)
       .join('\n\n');
+    const { vector, provider } = await embedWithProvider(content);
 
     await this.prisma.documentChunk.create({
       data: {
@@ -452,7 +465,8 @@ export class KnowledgeService {
         knowledgeLevel: 3,
         sourceLabel: ticket.reference,
         content,
-        embedding: embed(content),
+        embedding: vector,
+        embeddingProvider: provider,
       },
     });
   }
@@ -467,13 +481,15 @@ export class KnowledgeService {
     content: string;
   }) {
     const content = `${article.title}\n\n${article.content}`;
+    const { vector, provider } = await embedWithProvider(content);
     await this.prisma.documentChunk.create({
       data: {
         knowledgeArticleId: article.id,
         knowledgeLevel: 2,
         sourceLabel: article.title,
         content,
-        embedding: embed(content),
+        embedding: vector,
+        embeddingProvider: provider,
       },
     });
   }
@@ -484,13 +500,15 @@ export class KnowledgeService {
   // la consultation en lecture.
   async indexScript(script: { id: string; name: string; content: string }) {
     const content = `${script.name}\n\n${script.content}`;
+    const { vector, provider } = await embedWithProvider(content);
     await this.prisma.documentChunk.create({
       data: {
         scriptId: script.id,
         knowledgeLevel: 4,
         sourceLabel: script.name,
         content,
-        embedding: embed(content),
+        embedding: vector,
+        embeddingProvider: provider,
       },
     });
   }

@@ -741,11 +741,24 @@ model DocumentChunk {
   content            String
   position           Int                @default(0)
   embedding          Float[]
+  // rag/embedding.util.ts : HASHING (256 dims) et VOYAGE (1024 dims, modele
+  // voyage-multilingual-2) ne sont jamais des vecteurs comparables entre eux
+  // — ce champ permet a KnowledgeService.search() de ne calculer la
+  // similarite cosinus qu'entre embeddings du meme fournisseur, meme si les
+  // deux coexistent en base (ex. documents indexes avant configuration de
+  // VOYAGE_API_KEY). Defaut HASHING : c'est le mode degrade RM-05, toujours
+  // disponible sans configuration.
+  embeddingProvider  EmbeddingProvider  @default(HASHING) @map("embedding_provider")
   createdAt          DateTime           @default(now()) @map("created_at")
 
   @@index([knowledgeLevel])
   @@index([ownerId])
   @@map("document_chunks")
+}
+
+enum EmbeddingProvider {
+  HASHING
+  VOYAGE
 }
 
 // docs/06-cas-utilisation.md UC-031 étape 3, docs/05-user-stories.md US-13,

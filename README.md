@@ -63,6 +63,7 @@ cp .env.example .env
 | `FRONTEND_URL` | Origine autorisée en CORS — doit correspondre au port du frontend (`http://localhost:3002` par défaut) |
 | `RESEND_API_KEY` | Clé API [Resend](https://resend.com/api-keys), utilisée pour envoyer un email à chaque notification (assignation de ticket, nouveau commentaire) |
 | `ANTHROPIC_API_KEY` | Clé API [Anthropic](https://console.anthropic.com/settings/keys), utilisée pour l'analyse IA d'un ticket à la création (`POST /tickets/ai-diagnose`) |
+| `VOYAGE_API_KEY` | Clé API [Voyage AI](https://dashboard.voyageai.com/api-keys), utilisée pour les embeddings de la base de connaissances (RAG). Optionnelle : absente, ou en cas d'échec de l'appel, le système retombe automatiquement sur un vectoriseur local gratuit (voir `backend/src/knowledge/rag/embedding.util.ts`) |
 
 **Frontend** (`frontend/.env.local`, à partir de `frontend/.env.local.example`) :
 
@@ -103,7 +104,7 @@ npm run dev
 
 Le backend a trois familles de tests, avec des implications très différentes en termes de coût et de rapidité :
 
-| Commande | Ce qu'elle exécute | Appelle la vraie API Anthropic ? |
+| Commande | Ce qu'elle exécute | Appelle une vraie API externe (Anthropic, Voyage AI) ? |
 |---|---|---|
 | `npm test` (dans `backend/`) | Tests unitaires (`src/**/*.spec.ts`) | **Non** |
 | `npm run test:e2e` (dans `backend/`) | Tests end-to-end (`test/*.e2e-spec.ts`), contre un vrai PostgreSQL | **Non** |
@@ -111,19 +112,21 @@ Le backend a trois familles de tests, avec des implications très différentes e
 
 ### Pourquoi cette distinction
 
-`AiService` (module `backend/src/ai/`) appelle l'API Anthropic (Claude) pour cinq agents IA (Diagnostic, Help Desk, Technicien, Documentation, Automatisation). Sans précaution, chaque exécution de test qui passe par un de ces agents facturerait un vrai appel API — ce qui devient rapidement coûteux et lent quand ces tests s'exécutent à chaque `npm test`/`npm run test:e2e`, en local comme en CI.
+`AiService` (module `backend/src/ai/`) appelle l'API Anthropic (Claude) pour cinq agents IA (Diagnostic, Help Desk, Technicien, Documentation, Automatisation), et `embed()`/`embedWithProvider()` (module `backend/src/knowledge/rag/embedding.util.ts`) appellent l'API Voyage AI pour les embeddings de la base de connaissances (RAG). Sans précaution, chaque exécution de test qui passe par l'un de ces appels facturerait un vrai appel API — ce qui devient rapidement coûteux et lent quand ces tests s'exécutent à chaque `npm test`/`npm run test:e2e`, en local comme en CI.
 
-La solution : `backend/test/support/anthropic-mock.ts` fournit un mock réutilisable du SDK `@anthropic-ai/sdk`, injecté via `jest.mock('@anthropic-ai/sdk', ...)` en tête de chaque fichier de test concerné (tous les `*.spec.ts` d'agents IA, et les `*.e2e-spec.ts` dont un endpoint déclenche un agent IA — `tickets`, `knowledge`, `diagnostics`, `automation`). Ce mock :
+La solution : `backend/test/support/anthropic-mock.ts` et `backend/test/support/voyage-mock.ts` fournissent chacun un mock réutilisable du SDK correspondant (`@anthropic-ai/sdk`, `voyageai`), injecté via `jest.mock(...)` en tête de chaque fichier de test concerné (tous les `*.spec.ts` d'agents IA/RAG, et les `*.e2e-spec.ts` dont un endpoint déclenche un agent IA — `tickets`, `knowledge`, `diagnostics`, `automation`). Le mock Anthropic :
 
 - répond avec une réponse `tool_use` **par défaut, réaliste, propre à chaque outil** (`suggest_ticket_details`, `continue_diagnostic`, `assist_technician`, `propose_knowledge_article`, `suggest_automation_script`, `evaluate_auto_resolution`) — la plupart des tests n'ont donc rien à configurer ;
 - permet, via `queueAnthropicResponse(...)`, de simuler un scénario précis pour un seul appel (haute confiance, faible confiance, catégorie détectée, catégorie ambiguë, script proposé, etc.) ;
 - permet, via `queueAnthropicError(...)`, de simuler une erreur ou un timeout de l'API, pour vérifier que `AiService` retombe bien sur son mode dégradé (RM-05) plutôt que de planter.
 
-Les tests unitaires de `src/ai/ai.service.spec.ts` couvrent ainsi chaque agent sur son chemin "réel-Claude" (mocké) ET son chemin dégradé (sans clé API), sans jamais toucher le réseau.
+Le mock Voyage suit exactement le même principe (`queueVoyageResponse(...)`, `queueVoyageError(...)`), pour vérifier que `embedWithProvider()` bascule bien vers le vectoriseur local (hashing trick) quand `VOYAGE_API_KEY` est absente ou que l'appel échoue.
+
+Les tests unitaires de `src/ai/ai.service.spec.ts` et `src/knowledge/rag/embedding.util.spec.ts` couvrent ainsi chaque agent/vectoriseur sur son chemin "réel" (mocké) ET son chemin dégradé (sans clé API), sans jamais toucher le réseau.
 
 ### La suite `@real-api` (`backend/test/live/`)
 
-Trois tests, un par agent représentatif (Diagnostic, Help Desk, Technicien), appellent volontairement la vraie API Anthropic — sans mock — pour vérifier que les schémas d'outils (tool-use) fonctionnent encore réellement contre le modèle, ce que la suite mockée ne peut pas garantir par construction.
+Trois tests, un par agent représentatif (Diagnostic, Help Desk, Technicien), appellent volontairement la vraie API Anthropic — sans mock — pour vérifier que les schémas d'outils (tool-use) fonctionnent encore réellement contre le modèle, ce que la suite mockée ne peut pas garantir par construction. (Voyage AI n'a pas son propre test `@real-api` dédié : `embedWithProvider()` est une fonction pure côté schéma de requête/réponse, moins sujette à dérive qu'un tool-use LLM — le mock unitaire suffit.)
 
 Cette suite :
 - **n'est jamais exécutée automatiquement** — ni par `npm test`, ni par `npm run test:e2e` (exclue via `testPathIgnorePatterns` dans `backend/test/jest-e2e.json`), ni par le pipeline CI (`.github/workflows/backend-tests.yml`, qui n'invoque jamais `test:integration:live`) ;
@@ -135,7 +138,7 @@ cd backend
 npm run test:integration:live
 ```
 
-N'ajoutez pas de nouveaux tests dans `test/live/` sans une bonne raison — la couverture de scénarios détaillée (confiance haute/faible, ambiguïté, erreurs) doit vivre dans `src/ai/ai.service.spec.ts` via le mock, pas ici.
+N'ajoutez pas de nouveaux tests dans `test/live/` sans une bonne raison — la couverture de scénarios détaillée (confiance haute/faible, ambiguïté, erreurs) doit vivre dans `src/ai/ai.service.spec.ts`/`embedding.util.spec.ts` via les mocks, pas ici.
 
 ## Ports utilisés
 
