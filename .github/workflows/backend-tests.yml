@@ -1,0 +1,85 @@
+name: Backend tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ai_help_desk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_help_desk?schema=public
+      JWT_SECRET: ci-only-secret-not-used-in-production
+      JWT_EXPIRES_IN: 1h
+      FRONTEND_URL: http://localhost:3002
+      REFRESH_TOKEN_EXPIRES_IN_DAYS: "30"
+      # No RESEND_API_KEY: EmailService logs and skips sending rather than
+      # failing when it's absent (see backend/src/email/email.service.ts).
+      #
+      # IMPORTANT: this is a syntactically valid but non-functional key.
+      # Every unit test and this workflow's e2e run mock `@anthropic-ai/sdk`
+      # (see backend/test/support/anthropic-mock.ts and the "Tests" section
+      # of the README) — this variable only needs to be *present* so
+      # AiService constructs its client and takes the mocked real-Claude
+      # code path instead of its degraded/no-key fallback. CI must NEVER be
+      # given a real Anthropic key: the @real-api live suite
+      # (backend/test/live/) is excluded from both `npm test` and
+      # `npm run test:e2e` (see backend/test/jest-e2e.json
+      # testPathIgnorePatterns) and is intentionally not invoked anywhere in
+      # this workflow — it only runs via `npm run test:integration:live`,
+      # by hand, with a real key configured locally.
+      ANTHROPIC_API_KEY: sk-ant-fake-key-for-ci
+      # No VOYAGE_API_KEY here, deliberately (unlike ANTHROPIC_API_KEY above):
+      # `voyageai` is only mocked in the unit test file
+      # (src/knowledge/rag/embedding.util.spec.ts), not in the e2e specs —
+      # setting a key here without an e2e-level mock would make embed() try a
+      # real, unmocked Voyage AI call whenever an e2e test resolves a ticket
+      # or approves an article. Leaving it unset keeps embed() on its local,
+      # free, deterministic fallback (RM-05) for the whole e2e suite, with
+      # zero risk of a real network call.
+
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      - run: npx prisma migrate deploy
+
+      - run: npm run build
+
+      - run: npm run lint
+
+      - name: Unit tests (never call the real Anthropic API — see test/support/anthropic-mock.ts)
+        run: npm test
+
+      - name: E2E tests (real Postgres, mocked Anthropic API)
+        run: npm run test:e2e -- --runInBand

@@ -8,6 +8,14 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Role } from '../generated/prisma/client';
 
+// Mocks the Anthropic SDK so the Agent Diagnostic/Help Desk calls below
+// never hit the real API — see test/support/anthropic-mock.ts and the root
+// README "Tests" section.
+jest.mock('@anthropic-ai/sdk', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./support/anthropic-mock').anthropicSdkMockFactory(),
+);
+
 // docs/11-documentation-api.md §5 (module Diagnostics : historique et
 // feedback d'une conversation) et §6 (GET /ai/conversations/:id/cost),
 // docs/08-architecture-ia.md §4.4.
@@ -44,9 +52,9 @@ describe('Diagnostics (e2e)', () => {
 
   // docs/06-cas-utilisation.md UC-001 étapes 1-6 : l'Agent Help Desk pose au
   // plus une question de clarification à la fois, jusqu'à un maximum de 3
-  // tours (MAX_CLARIFYING_TURNS) au-delà duquel un diagnostic est forcé —
-  // ce repli borne la boucle pour un test déterministe malgré un appel réel
-  // à l'API Anthropic dont le nombre exact de questions n'est pas garanti.
+  // tours (MAX_CLARIFYING_TURNS) au-delà duquel un diagnostic est forcé — ce
+  // repli borne la boucle par sécurité (le mock répond needsMoreInfo=false
+  // dès le premier tour, donc la boucle ne s'exécute normalement pas).
   async function converseUntilDiagnosed(
     token: string,
     firstMessage: string,
@@ -191,9 +199,8 @@ describe('Diagnostics (e2e)', () => {
     await app.close();
   });
 
-  // Timeout raised: exercises the real Anthropic API call (Agent
-  // Diagnostic) — slower than Jest's 5s default, same as other e2e files
-  // that trigger a real AI call.
+  // docs/09-architecture-agents-ia.md §3.1 (Agent Diagnostic), mocké — voir
+  // jest.mock() en tête de fichier.
   it('creates an AI conversation when diagnosing a ticket description (POST /tickets/ai-diagnose)', async () => {
     const res = await apiRequest(app)
       .post('/tickets/ai-diagnose')
@@ -206,14 +213,15 @@ describe('Diagnostics (e2e)', () => {
 
     expect(res.body.conversationId).toEqual(expect.any(String));
     conversationId = res.body.conversationId;
-  }, 30000);
+  });
 
   // docs/06-cas-utilisation.md UC-001, docs/09-architecture-agents-ia.md §3.2
   // (Agent Help Desk) : dialogue multi-tour, avant toute création de ticket.
-  // POST /diagnostics is rate-limited to 10 req/60s (docs/11 §5) and each
-  // call here exercises the real Anthropic API — these tests are kept to a
-  // minimum and reuse the same conversation across assertions rather than
-  // starting a fresh one each time, to stay comfortably under that budget.
+  // POST /diagnostics is rate-limited to 10 req/60s (docs/11 §5) — the AI
+  // call itself is mocked, but the rate limit still applies, so these tests
+  // are kept to a minimum and reuse the same conversation across assertions
+  // rather than starting a fresh one each time, to stay comfortably under
+  // that budget.
   describe('POST /diagnostics (Agent Help Desk conversationnel)', () => {
     let helpdeskConversationId: string;
 
@@ -230,7 +238,7 @@ describe('Diagnostics (e2e)', () => {
       expect(Array.isArray(body.diagnosis.suggestedSteps)).toBe(true);
       expect(body.diagnosis.suggestedSteps.length).toBeGreaterThan(0);
       expect(typeof body.diagnosis.confidence).toBe('number');
-    }, 60000);
+    });
 
     it('forbids continuing a conversation that belongs to another employee', async () => {
       // Reuses the conversation from the previous test: converseDiagnostic
@@ -359,7 +367,7 @@ describe('Diagnostics (e2e)', () => {
       });
       expect(escalated?.status).toBe('ESCALATED');
       expect(escalated?.ticketId).toBe(ticketRes.body.id);
-    }, 60000);
+    });
   });
 
   describe('GET /diagnostics/:conversationId', () => {

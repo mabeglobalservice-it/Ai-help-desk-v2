@@ -14,6 +14,18 @@ import {
   ScriptLanguage,
   TicketStatus,
 } from '../generated/prisma/client';
+import {
+  queueAnthropicResponse,
+  toolUseResponse,
+} from './support/anthropic-mock';
+
+// Mocks the Anthropic SDK so US-28 script suggestion (Agent Technicien) and
+// UC-015 auto-resolution evaluation (Agent IA) never hit the real API — see
+// test/support/anthropic-mock.ts and the root README "Tests" section.
+jest.mock('@anthropic-ai/sdk', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./support/anthropic-mock').anthropicSdkMockFactory(),
+);
 
 // docs/06-cas-utilisation.md UC-014/UC-022, docs/09-architecture-agents-ia.md
 // §3.5, docs/11-documentation-api.md §8 — module Automation : exécution
@@ -283,10 +295,17 @@ describe('Automation (e2e)', () => {
     expect(sensitive.body.isSensitive).toBe(true);
   });
 
-  // docs/05-user-stories.md US-28. Timeout raised: hits the real Anthropic
-  // API (or falls back locally), slower than Jest's 5s default.
+  // docs/05-user-stories.md US-28.
   describe('suggest (US-28)', () => {
     it('suggests the matching script and a justification for an account-related ticket', async () => {
+      queueAnthropicResponse(
+        toolUseResponse('suggest_automation_script', {
+          scriptId: sensitiveScriptId,
+          justification:
+            'Le ticket décrit un compte verrouillé après plusieurs tentatives.',
+        }),
+      );
+
       const res = await apiRequest(app)
         .get(`/automation/suggest/${accountTicketId}`)
         .set('Authorization', `Bearer ${requesterToken}`)
@@ -295,14 +314,16 @@ describe('Automation (e2e)', () => {
       expect(res.body.scriptId).toBe(sensitiveScriptId);
       expect(typeof res.body.justification).toBe('string');
       expect(res.body.justification.length).toBeGreaterThan(0);
-    }, 30000);
+    });
 
+    // Matches the mock's built-in default response for this tool (no
+    // match found) — see test/support/anthropic-mock.ts.
     it('returns 404 when nothing matches the ticket', async () => {
       await apiRequest(app)
         .get(`/automation/suggest/${unrelatedTicketId}`)
         .set('Authorization', `Bearer ${requesterToken}`)
         .expect(404);
-    }, 30000);
+    });
 
     it('forbids a non-TECHNICIAN from requesting a suggestion', async () => {
       await apiRequest(app)
@@ -426,7 +447,6 @@ describe('Automation (e2e)', () => {
   });
 
   // docs/06-cas-utilisation.md UC-015 ("Résolution automatique"), RM-03.
-  // Timeout raised: hits the real Anthropic API.
   describe('auto-resolve (UC-015)', () => {
     it('rejects a non-EMPLOYEE on both routes', async () => {
       await apiRequest(app)
@@ -446,6 +466,8 @@ describe('Automation (e2e)', () => {
         .expect(403);
     });
 
+    // Matches the mock's built-in default response for this tool (not
+    // eligible) — see test/support/anthropic-mock.ts.
     it('proposes eligible=false for a problem that matches no non-sensitive script', async () => {
       const res = await apiRequest(app)
         .post('/automation/auto-resolve')
@@ -457,9 +479,19 @@ describe('Automation (e2e)', () => {
         .expect(201);
 
       expect(res.body.eligible).toBe(false);
-    }, 30000);
+    });
 
     it('proposes an eligible auto-resolution for a clear, unambiguous match, then executes it on confirm (no ticket created)', async () => {
+      queueAnthropicResponse(
+        toolUseResponse('evaluate_auto_resolution', {
+          eligible: true,
+          scriptId: autoResolveScriptId,
+          confidence: 0.98,
+          explanation:
+            "Le cache du spouleur d'impression correspond exactement au script disponible.",
+        }),
+      );
+
       const proposal = await apiRequest(app)
         .post('/automation/auto-resolve')
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -496,7 +528,7 @@ describe('Automation (e2e)', () => {
         where: { autoResolutionId: confirmed.body.autoResolutionId },
       });
       expect(article?.status).toBe('PROPOSED');
-    }, 30000);
+    });
 
     // docs/06-cas-utilisation.md UC-015, cas d'erreur : RM-03 est revérifié
     // à la confirmation — un script devenu sensible depuis la proposition
@@ -544,7 +576,7 @@ describe('Automation (e2e)', () => {
           data: { isSensitive: false },
         });
       }
-    }, 30000);
+    });
 
     it('returns 404 when the script no longer exists', async () => {
       await apiRequest(app)

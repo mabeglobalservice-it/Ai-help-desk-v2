@@ -9,6 +9,15 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { KnowledgeService } from '../src/knowledge/knowledge.service';
 import { Role, TicketStatus } from '../generated/prisma/client';
 
+// Mocks the Anthropic SDK so resolving a ticket (which triggers the Agent
+// Documentation's article proposal, docs/10-architecture-rag.md §11) never
+// calls the real API — see test/support/anthropic-mock.ts and the root
+// README "Tests" section.
+jest.mock('@anthropic-ai/sdk', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./support/anthropic-mock').anthropicSdkMockFactory(),
+);
+
 // docs/05-user-stories.md US-26, docs/10-architecture-rag.md section 13
 // (niveau 3 "tickets résolus") — full-text search over resolved tickets.
 // Exercised against a real Postgres since the query itself (tsvector/
@@ -377,9 +386,8 @@ describe('Knowledge (e2e)', () => {
         .expect(403);
     });
 
-    // Timeout raised: this test resolves a ticket, which triggers a real
-    // call to the Anthropic API (Agent Documentation summary generation) —
-    // slower than Jest's 5s default.
+    // Resolving a ticket triggers the Agent Documentation's article
+    // proposal (mocked, see jest.mock() in tête de fichier).
     it('proposes an article on resolution, keeps it unsearchable until approved, then indexes it', async () => {
       await apiRequest(app)
         .patch(`/tickets/${toApproveTicketId}`)
@@ -434,9 +442,8 @@ describe('Knowledge (e2e)', () => {
         .set('Authorization', `Bearer ${supervisorToken}`)
         .send({ decision: 'APPROVED' })
         .expect(400);
-    }, 30000);
+    });
 
-    // Timeout raised: same reason as above (real Anthropic API call).
     it('rejects a proposed article, which never becomes searchable', async () => {
       await apiRequest(app)
         .patch(`/tickets/${toRejectTicketId}`)
@@ -472,7 +479,7 @@ describe('Knowledge (e2e)', () => {
           (row: any) => row.sourceType === 'ARTICLE' && row.id === proposed.id,
         ),
       ).toBe(false);
-    }, 30000);
+    });
   });
 
   // docs/11-documentation-api.md §7, docs/10-architecture-rag.md §13

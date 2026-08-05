@@ -3,6 +3,22 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AiService } from './ai.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiConversationStatus } from '../../generated/prisma/client';
+import {
+  queueAnthropicError,
+  queueAnthropicResponse,
+  resetAnthropicMock,
+  toolUseResponse,
+} from '../../test/support/anthropic-mock';
+
+// docs/09-architecture-agents-ia.md: every agent's real-Claude tool-use
+// response parsing is exercised here via a mocked Anthropic SDK (see
+// test/support/anthropic-mock.ts and the root README "Tests" section) —
+// no unit test ever calls the real API, so this suite never spends credits
+// or depends on network access.
+jest.mock('@anthropic-ai/sdk', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('../../test/support/anthropic-mock').anthropicSdkMockFactory(),
+);
 
 describe('AiService', () => {
   let service: AiService;
@@ -30,6 +46,7 @@ describe('AiService', () => {
     // fallback path deterministically, without depending on network access
     // or real credentials being present in the test environment.
     delete process.env.ANTHROPIC_API_KEY;
+    resetAnthropicMock();
 
     prisma = {
       ticketCategory: { findMany: jest.fn() },
@@ -107,6 +124,46 @@ describe('AiService', () => {
         where: { name: 'DIAGNOSTIC' },
       });
     });
+
+    // Real-Claude path, mocked Anthropic SDK (see test/support/anthropic-mock.ts).
+    describe('with the AI provider available (mocked)', () => {
+      beforeEach(async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+        service = await buildService();
+      });
+
+      it('detects the category confidently from a clear description', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('suggest_ticket_details', {
+            title: 'Connexion VPN impossible',
+            categoryId: 'cat-logiciel',
+            priorityId: 'prio-urgente',
+          }),
+        );
+
+        const result = await service.diagnoseTicket(
+          "Impossible de me connecter au VPN depuis ce matin, toute l'équipe est bloquée",
+          'user-1',
+        );
+
+        expect(result.degraded).toBe(false);
+        expect(result.categoryId).toBe('cat-logiciel');
+        expect(result.priorityId).toBe('prio-urgente');
+        expect(result.title).toBe('Connexion VPN impossible');
+      });
+
+      it('falls back to local keyword diagnosis when the AI call errors or times out', async () => {
+        queueAnthropicError();
+
+        const result = await service.diagnoseTicket(
+          "L'imprimante ne s'allume plus depuis ce matin",
+          'user-1',
+        );
+
+        expect(result.degraded).toBe(true);
+        expect(result.categoryId).toBe('cat-materiel');
+      });
+    });
   });
 
   describe('summarizeTicketForKnowledgeArticle', () => {
@@ -158,6 +215,50 @@ describe('AiService', () => {
       expect(draft.degraded).toBe(true);
       expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
         where: { name: 'DOCUMENTATION' },
+      });
+    });
+
+    // Real-Claude path, mocked Anthropic SDK (see test/support/anthropic-mock.ts).
+    describe('with the AI provider available (mocked)', () => {
+      beforeEach(async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+        service = await buildService();
+      });
+
+      it('generates an article via the AI provider', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('propose_knowledge_article', {
+            title: 'Résoudre un blocage du service de spouleur',
+            content:
+              'Cause probable : le service de spouleur se bloque après une mise à jour.\n' +
+              'Solution appliquée : redémarrer le service de spouleur.',
+          }),
+        );
+
+        const draft = await service.summarizeTicketForKnowledgeArticle({
+          title: 'Imprimante réseau bloquée',
+          summary: 'Les travaux ne sortent plus depuis ce matin.',
+          resolutionNote: 'Redémarrage du service de spouleur.',
+          categoryName: 'Matériel',
+        });
+
+        expect(draft.degraded).toBe(false);
+        expect(draft.title).toBe('Résoudre un blocage du service de spouleur');
+        expect(draft.content).toContain('Solution appliquée');
+      });
+
+      it('falls back to the local template when the AI call errors or times out', async () => {
+        queueAnthropicError();
+
+        const draft = await service.summarizeTicketForKnowledgeArticle({
+          title: 'Imprimante réseau bloquée',
+          summary: 'Les travaux ne sortent plus depuis ce matin.',
+          resolutionNote: 'Redémarrage du service de spouleur.',
+          categoryName: 'Matériel',
+        });
+
+        expect(draft.degraded).toBe(true);
+        expect(draft.content).toContain('Cause probable');
       });
     });
   });
@@ -236,6 +337,71 @@ describe('AiService', () => {
 
       expect(result).toBeNull();
     });
+
+    // Real-Claude path, mocked Anthropic SDK (see test/support/anthropic-mock.ts).
+    describe('with the AI provider available (mocked)', () => {
+      beforeEach(async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+        service = await buildService();
+      });
+
+      it('suggests a script via the AI provider', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('suggest_automation_script', {
+            scriptId: 'script-dns',
+            justification: 'Le ticket décrit un échec de résolution DNS.',
+          }),
+        );
+
+        const result = await service.suggestAutomationForTicket(
+          {
+            title: 'Sites web inaccessibles',
+            summary: 'Erreur "serveur introuvable" sur tous les sites',
+            categoryName: 'Réseau',
+          },
+          scripts,
+        );
+
+        expect(result?.degraded).toBe(false);
+        expect(result?.scriptId).toBe('script-dns');
+      });
+
+      it('returns null when the AI provider finds no script matching (ambiguous ticket)', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('suggest_automation_script', {
+            scriptId: 'aucun',
+            justification: '',
+          }),
+        );
+
+        const result = await service.suggestAutomationForTicket(
+          {
+            title: 'Question générale sur la politique de télétravail',
+            summary: null,
+            categoryName: 'Logiciel',
+          },
+          scripts,
+        );
+
+        expect(result).toBeNull();
+      });
+
+      it('falls back to keyword matching when the AI call errors or times out', async () => {
+        queueAnthropicError();
+
+        const result = await service.suggestAutomationForTicket(
+          {
+            title: 'Mot de passe oublié, compte verrouillé',
+            summary: 'Utilisateur bloqué après plusieurs tentatives',
+            categoryName: 'Accès',
+          },
+          scripts,
+        );
+
+        expect(result?.degraded).toBe(true);
+        expect(result?.scriptId).toBe('script-password');
+      });
+    });
   });
 
   // docs/06-cas-utilisation.md UC-015, RM-03 : contrairement aux autres
@@ -284,14 +450,72 @@ describe('AiService', () => {
         where: { name: 'AUTOMATION' },
       });
     });
+
+    // Real-Claude path, mocked Anthropic SDK (see test/support/anthropic-mock.ts).
+    describe('with the AI provider available (mocked)', () => {
+      beforeEach(async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+        service = await buildService();
+      });
+
+      it('proposes auto-resolution when the AI provider reports confidence >= 0.95', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('evaluate_auto_resolution', {
+            eligible: true,
+            scriptId: 'script-cache',
+            confidence: 0.98,
+            explanation:
+              'Le cache imprimante correspond exactement au problème décrit.',
+          }),
+        );
+
+        const result = await service.attemptAutoResolution(
+          'Imprimante bloquée, redémarrage du spouleur nécessaire',
+          nonSensitiveScripts,
+        );
+
+        expect(result).not.toBeNull();
+        expect(result?.scriptId).toBe('script-cache');
+        expect(result?.confidence).toBeGreaterThanOrEqual(0.95);
+      });
+
+      // docs/06-cas-utilisation.md RM-03 : le seuil de 95% est vérifié
+      // côté serveur, jamais délégué à la seule affirmation du modèle.
+      it("never proposes a resolution when the AI provider's confidence is below 0.95 (RM-03)", async () => {
+        queueAnthropicResponse(
+          toolUseResponse('evaluate_auto_resolution', {
+            eligible: true,
+            scriptId: 'script-cache',
+            confidence: 0.8,
+            explanation: 'Correspondance plausible mais incertaine.',
+          }),
+        );
+
+        const result = await service.attemptAutoResolution(
+          'Imprimante bloquée',
+          nonSensitiveScripts,
+        );
+
+        expect(result).toBeNull();
+      });
+
+      it('falls back to no proposal when the AI call errors or times out', async () => {
+        queueAnthropicError();
+
+        const result = await service.attemptAutoResolution(
+          'Imprimante bloquée, redémarrage du spouleur nécessaire',
+          nonSensitiveScripts,
+        );
+
+        expect(result).toBeNull();
+      });
+    });
   });
 
   // docs/06-cas-utilisation.md UC-001, docs/09-architecture-agents-ia.md §3.2
-  // (Agent Help Desk). Unlike the real-Claude tool-use path (covered by e2e
-  // tests against the real Anthropic API), these unit tests exercise the
-  // degraded-mode path (no API key) and the ownership/status guards in
-  // getOrStartConversation, following the established pattern for the other
-  // agents in this file.
+  // (Agent Help Desk). Covers both the degraded-mode path (no API key) and
+  // the ownership/status guards in getOrStartConversation; the real-Claude
+  // tool-use path (mocked Anthropic SDK) is covered separately below.
   describe('converseDiagnostic', () => {
     const categories = [
       { id: 'cat-materiel', name: 'Matériel' },
@@ -417,13 +641,84 @@ describe('AiService', () => {
         where: { name: 'HELPDESK' },
       });
     });
+
+    // Real-Claude path, mocked Anthropic SDK (see test/support/anthropic-mock.ts).
+    describe('with the AI provider available (mocked)', () => {
+      beforeEach(async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+        service = await buildService();
+      });
+
+      it('returns a high-confidence diagnosis directly from the AI provider', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('continue_diagnostic', {
+            needsMoreInfo: false,
+            title: 'Écran bleu au démarrage',
+            categoryId: 'cat-materiel',
+            priorityId: 'prio-urgente',
+            causeProbable: 'Pilote graphique corrompu après une mise à jour.',
+            suggestedSteps: [
+              'Redémarrer en mode sans échec',
+              'Revenir à la version précédente du pilote',
+            ],
+            confidence: 0.92,
+          }),
+        );
+
+        const result = await service.converseDiagnostic(
+          null,
+          'user-1',
+          'Écran bleu à chaque démarrage depuis la mise à jour Windows',
+        );
+
+        expect(result.status).toBe('DIAGNOSED');
+        if (result.status !== 'DIAGNOSED') return;
+        expect(result.diagnosis.degraded).toBe(false);
+        expect(result.diagnosis.confidence).toBeGreaterThanOrEqual(0.9);
+        expect(result.diagnosis.categoryId).toBe('cat-materiel');
+      });
+
+      // Couvre à la fois "faible confiance" et "catégorie ambiguë" : le
+      // modèle préfère poser une question plutôt que de deviner.
+      it('asks a clarifying question when the problem is ambiguous / confidence would be low', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('continue_diagnostic', {
+            needsMoreInfo: true,
+            question: 'Le problème concerne-t-il un seul poste ou plusieurs ?',
+          }),
+        );
+
+        const result = await service.converseDiagnostic(
+          null,
+          'user-1',
+          'Ça ne marche pas',
+        );
+
+        expect(result.status).toBe('NEEDS_INFO');
+        if (result.status !== 'NEEDS_INFO') return;
+        expect(result.question).toContain('poste');
+      });
+
+      it('falls back to a degraded diagnosis when the AI call errors or times out', async () => {
+        queueAnthropicError();
+
+        const result = await service.converseDiagnostic(
+          null,
+          'user-1',
+          "L'imprimante ne s'allume plus depuis ce matin",
+        );
+
+        expect(result.status).toBe('DIAGNOSED');
+        if (result.status !== 'DIAGNOSED') return;
+        expect(result.diagnosis.degraded).toBe(true);
+      });
+    });
   });
 
-  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien). Like
-  // converseDiagnostic, the real-Claude tool-use path is covered by e2e
-  // tests against the real Anthropic API; these unit tests exercise the
-  // degraded-mode path (no API key), which — unlike every other agent in
-  // this file — must never fabricate a suggestedScript.
+  // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien). Covers both
+  // the degraded-mode path (no API key), which — unlike every other agent in
+  // this file — must never fabricate a suggestedScript, and the real-Claude
+  // tool-use path (mocked Anthropic SDK) below.
   describe('assistTechnician', () => {
     const context = {
       ticketTitle: 'Imprimante bloquée',
@@ -488,6 +783,47 @@ describe('AiService', () => {
           }) as unknown,
         }),
       );
+    });
+
+    // Real-Claude path, mocked Anthropic SDK (see test/support/anthropic-mock.ts).
+    describe('with the AI provider available (mocked)', () => {
+      beforeEach(async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+        service = await buildService();
+      });
+
+      it('returns the AI-generated explanation and suggested script', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('assist_technician', {
+            explanation:
+              'Le service de spouleur se bloque après une mise à jour Windows récente.',
+            suggestedScript: 'Restart-Service Spooler',
+          }),
+        );
+
+        const result = await service.assistTechnician(
+          'tech-1',
+          'Comment relancer le spouleur ?',
+          context,
+        );
+
+        expect(result.degraded).toBe(false);
+        expect(result.suggestedScript).toBe('Restart-Service Spooler');
+        expect(result.explanation).toContain('spouleur');
+      });
+
+      it('falls back to a degraded, script-free explanation when the AI call errors or times out', async () => {
+        queueAnthropicError();
+
+        const result = await service.assistTechnician(
+          'tech-1',
+          'Comment relancer le spouleur ?',
+          context,
+        );
+
+        expect(result.degraded).toBe(true);
+        expect(result.suggestedScript).toBeNull();
+      });
     });
   });
 });

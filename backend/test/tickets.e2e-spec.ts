@@ -8,6 +8,14 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Role, TicketStatus } from '../generated/prisma/client';
 
+// Mocks the Anthropic SDK so ticket resolution (Agent Documentation) and
+// /tickets/:id/assist (Agent Technicien) never call the real API — see
+// test/support/anthropic-mock.ts and the root README "Tests" section.
+jest.mock('@anthropic-ai/sdk', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./support/anthropic-mock').anthropicSdkMockFactory(),
+);
+
 // Critical-path e2e coverage for the ticket lifecycle and RM-04 scoping
 // (docs/06-cas-utilisation.md): exercised through real HTTP requests so the
 // controller wiring (guards, DTO validation) is verified, not just the
@@ -340,9 +348,9 @@ describe('Tickets (e2e)', () => {
     expect(res.body.message).toContain('note de résolution');
   });
 
-  // Timeout raised: resolving a ticket now triggers a real call to the
-  // Anthropic API (docs/10-architecture-rag.md §11, Agent Documentation
-  // proposes a knowledge article) — slower than Jest's 5s default.
+  // docs/10-architecture-rag.md §11 : résoudre un ticket déclenche l'Agent
+  // Documentation (propose un article), mocké — voir jest.mock() en tête de
+  // fichier.
   it('lets the assigned technician resolve the ticket with a resolution note (UC-013)', async () => {
     const res = await apiRequest(app)
       .patch(`/tickets/${ticketId}`)
@@ -357,7 +365,7 @@ describe('Tickets (e2e)', () => {
     expect(res.body.resolutionNote).toBe(
       "Redémarrage du poste — le pilote s'était mal chargé.",
     );
-  }, 30000);
+  });
 
   it('rejects a rating from someone other than the owning employee', async () => {
     await apiRequest(app)
@@ -395,9 +403,8 @@ describe('Tickets (e2e)', () => {
         .expect(403);
     });
 
-    // Timeout raised: exercises the real Anthropic API call (Agent
-    // Technicien) — slower than Jest's 5s default, same as other e2e
-    // files that trigger a real AI call.
+    // docs/09-architecture-agents-ia.md §3.3 (Agent Technicien), mocké —
+    // voir jest.mock() en tête de fichier.
     it('gives the assigned technician an explanation, never executing anything', async () => {
       const res = await apiRequest(app)
         .post(`/tickets/${ticketId}/assist`)
@@ -420,7 +427,7 @@ describe('Tickets (e2e)', () => {
 
       const roles = conversation.body.messages.map((m: any) => m.role);
       expect(roles).toEqual(['USER', 'AGENT']);
-    }, 30000);
+    });
   });
 
   // docs/02-brd.md BR-07, §7 "Critères de succès".
