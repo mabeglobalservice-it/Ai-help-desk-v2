@@ -10,7 +10,7 @@ import { NOTIFICATION_TEMPLATES } from '../notifications/notification-templates'
 const FROM_ADDRESS = 'onboarding@resend.dev';
 const DEFAULT_ORGANIZATION_NAME = 'AI Help Desk';
 
-interface SendNotificationEmailInput {
+export interface SendNotificationEmailInput {
   to: string;
   displayName: string;
   type: NotificationType;
@@ -27,6 +27,15 @@ export class EmailService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // Ne rend jamais silencieusement un échec réel d'envoi (voir plus bas) :
+  // NotificationsService.deliverEmail() (via NotificationsDeliveryService,
+  // src/notifications-delivery/) s'appuie sur cette méthode à la fois comme
+  // job BullMQ (où une exception déclenche le retry avec backoff) et comme
+  // repli synchrone si Redis est indisponible (où l'appelant l'entoure
+  // lui-même d'un try/catch pour ne jamais casser la création de la
+  // notification). Seuls les cas "intentionnellement désactivé" (pas de clé,
+  // intégration coupée par l'Admin) restent des no-op silencieux — ce ne sont
+  // pas des échecs à retenter.
   async sendNotificationEmail(
     input: SendNotificationEmailInput,
   ): Promise<void> {
@@ -49,26 +58,20 @@ export class EmailService {
 
     const organizationName = await this.getOrganizationName();
 
-    try {
-      const { error } = await this.resend.emails.send({
-        from: FROM_ADDRESS,
-        to: input.to,
-        subject: `${organizationName} — ${NOTIFICATION_TEMPLATES[input.type].emailSubject}`,
-        html: this.buildHtml(input, organizationName),
-      });
+    const { error } = await this.resend.emails.send({
+      from: FROM_ADDRESS,
+      to: input.to,
+      subject: `${organizationName} — ${NOTIFICATION_TEMPLATES[input.type].emailSubject}`,
+      html: this.buildHtml(input, organizationName),
+    });
 
-      // The Resend SDK reports API-level failures (invalid recipient, quota, ...)
-      // via this `error` field rather than throwing.
-      if (error) {
-        this.logger.error(
-          `Échec de l'envoi de l'email de notification à ${input.to} : ${error.message}`,
-        );
-      }
-    } catch (error) {
-      // best-effort: a failed email shouldn't break the notification flow that triggered it
-      this.logger.error(
-        `Échec de l'envoi de l'email de notification à ${input.to}`,
-        error,
+    // The Resend SDK reports API-level failures (invalid recipient, quota, ...)
+    // via this `error` field rather than throwing — normalisé ici en
+    // exception pour que les deux appelants (job BullMQ, repli synchrone)
+    // n'aient qu'un seul mécanisme d'échec à gérer.
+    if (error) {
+      throw new Error(
+        `Échec de l'envoi de l'email de notification à ${input.to} : ${error.message}`,
       );
     }
   }

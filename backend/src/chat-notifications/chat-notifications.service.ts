@@ -1,8 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { IntegrationName } from '../../generated/prisma/client';
 
-interface SendChatNotificationInput {
+export interface SendChatNotificationInput {
   message: string;
   ticketUrl?: string;
 }
@@ -21,14 +21,41 @@ interface SendChatNotificationInput {
 // message direct par destinataire.
 @Injectable()
 export class ChatNotificationsService {
-  private readonly logger = new Logger(ChatNotificationsService.name);
   private readonly teamsWebhookUrl = process.env.TEAMS_WEBHOOK_URL || null;
   private readonly slackWebhookUrl = process.env.SLACK_WEBHOOK_URL || null;
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // Ne rend jamais silencieusement un échec réel d'envoi : cette méthode est
+  // appelée à la fois comme job BullMQ (src/notifications-delivery/, où une
+  // exception déclenche le retry avec backoff) et comme repli synchrone si
+  // Redis est indisponible (où l'appelant l'entoure lui-même d'un try/catch).
+  // Teams et Slack restent tentés indépendamment (Promise.allSettled) — un
+  // canal en échec ne doit pas empêcher l'autre d'être notifié — mais si l'un
+  // des deux échoue réellement, l'erreur est propagée pour que le mécanisme
+  // de retry (ou le log de repli) s'applique. Les no-op intentionnels (pas de
+  // webhook configuré, intégration désactivée par l'Admin) ne sont PAS des
+  // échecs et ne lèvent jamais.
   async sendNotification(input: SendChatNotificationInput): Promise<void> {
-    await Promise.all([this.postToTeams(input), this.postToSlack(input)]);
+    const results = await Promise.allSettled([
+      this.postToTeams(input),
+      this.postToSlack(input),
+    ]);
+
+    const failures = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failures.length > 0) {
+      throw new Error(
+        `Échec de l'envoi de la notification chat sur ${failures.length}/2 canal(aux) : ${failures
+          .map((failure) =>
+            failure.reason instanceof Error
+              ? failure.reason.message
+              : String(failure.reason),
+          )
+          .join('; ')}`,
+      );
+    }
   }
 
   // docs/11-documentation-api.md §12 (GET/PATCH /admin/integrations) :
@@ -46,27 +73,23 @@ export class ChatNotificationsService {
     if (!this.teamsWebhookUrl) return;
     if (!(await this.isIntegrationEnabled(IntegrationName.TEAMS))) return;
 
-    try {
-      const response = await fetch(this.teamsWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          '@type': 'MessageCard',
-          '@context': 'http://schema.org/extensions',
-          summary: 'AI Help Desk',
-          text: this.buildText(
-            input,
-            `[Voir le ticket](${input.ticketUrl ?? ''})`,
-          ),
-        }),
-      });
-      if (!response.ok) {
-        this.logger.error(
-          `Échec de l'envoi de la notification Teams : ${response.status} ${await response.text()}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error("Échec de l'envoi de la notification Teams", error);
+    const response = await fetch(this.teamsWebhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        '@type': 'MessageCard',
+        '@context': 'http://schema.org/extensions',
+        summary: 'AI Help Desk',
+        text: this.buildText(
+          input,
+          `[Voir le ticket](${input.ticketUrl ?? ''})`,
+        ),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Échec de l'envoi de la notification Teams : ${response.status} ${await response.text()}`,
+      );
     }
   }
 
@@ -74,24 +97,20 @@ export class ChatNotificationsService {
     if (!this.slackWebhookUrl) return;
     if (!(await this.isIntegrationEnabled(IntegrationName.SLACK))) return;
 
-    try {
-      const response = await fetch(this.slackWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: this.buildText(
-            input,
-            `<${input.ticketUrl ?? ''}|Voir le ticket>`,
-          ),
-        }),
-      });
-      if (!response.ok) {
-        this.logger.error(
-          `Échec de l'envoi de la notification Slack : ${response.status} ${await response.text()}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error("Échec de l'envoi de la notification Slack", error);
+    const response = await fetch(this.slackWebhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: this.buildText(
+          input,
+          `<${input.ticketUrl ?? ''}|Voir le ticket>`,
+        ),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Échec de l'envoi de la notification Slack : ${response.status} ${await response.text()}`,
+      );
     }
   }
 

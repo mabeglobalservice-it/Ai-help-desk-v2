@@ -17,5 +17,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # docs/14-plan-deploiement-cloud.md §3, docs/07-architecture-logicielle.md
+  # §"Files d'attente (BullMQ)" : file BullMQ "notifications-delivery" (voir
+  # backend/src/notifications-delivery/). Optionnel en dev local (RM-05) :
+  # sans ce service, le backend retombe automatiquement sur l'envoi
+  # synchrone des notifications — `docker compose up` sans Redis fonctionne
+  # toujours, juste sans découplage asynchrone.
+  redis:
+    image: redis:7
+    container_name: ai-help-desk-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
+  redis_data:

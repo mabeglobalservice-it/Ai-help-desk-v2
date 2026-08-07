@@ -2,11 +2,17 @@ import { Module } from '@nestjs/common';
 import { EmailModule } from '../email/email.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { ChatNotificationsModule } from '../chat-notifications/chat-notifications.module';
+import { NotificationsDeliveryModule } from '../notifications-delivery/notifications-delivery.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 
 @Module({
-  imports: [EmailModule, RealtimeModule, ChatNotificationsModule],
+  imports: [
+    EmailModule,
+    RealtimeModule,
+    ChatNotificationsModule,
+    NotificationsDeliveryModule,
+  ],
   controllers: [NotificationsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

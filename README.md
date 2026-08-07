@@ -32,7 +32,7 @@ npm install
 
 L'installation du backend exécute automatiquement `prisma generate` (hook `postinstall`).
 
-## 2. Démarrer PostgreSQL
+## 2. Démarrer PostgreSQL (et Redis, optionnel)
 
 **Option A — PostgreSQL installé localement**
 
@@ -44,7 +44,9 @@ Assurez-vous qu'une instance tourne sur `localhost:5432` avec un rôle `postgres
 docker compose up -d
 ```
 
-Démarre PostgreSQL sur `localhost:5432` avec les mêmes identifiants (`postgres` / `postgres` / base `ai_help_desk`), définis dans `docker-compose.yml`.
+Démarre PostgreSQL sur `localhost:5432` (`postgres` / `postgres` / base `ai_help_desk`) **et** Redis sur `localhost:6379`, définis dans `docker-compose.yml`.
+
+Redis alimente la file BullMQ `notifications-delivery` (envoi asynchrone des emails et webhooks Teams/Slack — voir `backend/src/notifications-delivery/`). Il est **optionnel** : sans Redis (installation locale sans Docker, ou service arrêté), le backend démarre normalement et retombe automatiquement sur l'envoi synchrone des notifications (RM-05) — voir la section [Notifications asynchrones](#notifications-asynchrones-redis--bullmq) plus bas.
 
 ## 3. Configurer les variables d'environnement
 
@@ -64,6 +66,7 @@ cp .env.example .env
 | `RESEND_API_KEY` | Clé API [Resend](https://resend.com/api-keys), utilisée pour envoyer un email à chaque notification (assignation de ticket, nouveau commentaire) |
 | `ANTHROPIC_API_KEY` | Clé API [Anthropic](https://console.anthropic.com/settings/keys), utilisée pour l'analyse IA d'un ticket à la création (`POST /tickets/ai-diagnose`) |
 | `VOYAGE_API_KEY` | Clé API [Voyage AI](https://dashboard.voyageai.com/api-keys), utilisée pour les embeddings de la base de connaissances (RAG). Optionnelle : absente, ou en cas d'échec de l'appel, le système retombe automatiquement sur un vectoriseur local gratuit (voir `backend/src/knowledge/rag/embedding.util.ts`) |
+| `REDIS_URL` | Connexion Redis pour la file BullMQ `notifications-delivery` (envoi asynchrone des notifications). Par défaut `redis://localhost:6379`. Optionnelle : Redis indisponible → repli automatique sur l'envoi synchrone (voir `backend/src/notifications-delivery/`) |
 
 **Frontend** (`frontend/.env.local`, à partir de `frontend/.env.local.example`) :
 
@@ -140,6 +143,22 @@ npm run test:integration:live
 
 N'ajoutez pas de nouveaux tests dans `test/live/` sans une bonne raison — la couverture de scénarios détaillée (confiance haute/faible, ambiguïté, erreurs) doit vivre dans `src/ai/ai.service.spec.ts`/`embedding.util.spec.ts` via les mocks, pas ici.
 
+## Notifications asynchrones (Redis + BullMQ)
+
+`NotificationsService.create()` (`backend/src/notifications/notifications.service.ts`) persiste la notification en base et la diffuse en temps réel (WebSocket) de façon **synchrone** — ces opérations sont rapides et in-process. L'envoi de l'email et des webhooks Teams/Slack, en revanche, dépend de services externes potentiellement lents (Resend, Teams, Slack) : plutôt que de faire attendre la requête qui a déclenché la notification (création de ticket, commentaire, changement de statut...), ces deux envois sont déportés vers une file BullMQ dédiée, `notifications-delivery` (`backend/src/notifications-delivery/`).
+
+- **`NotificationsDeliveryService`** ajoute un job `email` et/ou un job `chat` à la file, chacun avec sa propre politique de retry (5 tentatives, backoff exponentiel à partir de 2s) — un canal en échec transitoire ne perd pas la notification.
+- **`NotificationsDeliveryProcessor`** consomme ces jobs et appelle réellement `EmailService`/`ChatNotificationsService` — exactement la même logique métier qu'avant l'introduction de la file, seulement déplacée hors du chemin de requête.
+- **Repli (RM-05)** : si Redis est indisponible (pas lancé en local, panne, timeout), `NotificationsDeliveryService.enqueueEmail()`/`enqueueChat()` renvoient `false` sans jamais lever, et `NotificationsService` retombe immédiatement sur l'envoi synchrone d'origine (même comportement qu'avant l'introduction de BullMQ), avec un simple avertissement dans les logs. La création de la notification elle-même n'échoue jamais à cause d'un problème Redis ou d'un envoi (synchrone ou en file) qui échoue.
+
+En local, Redis est optionnel : sans lui, tout fonctionne exactement comme avant (envoi synchrone). Pour l'activer :
+
+```bash
+docker compose up -d redis
+```
+
+ou pointez `REDIS_URL` vers une instance existante (voir la table des variables d'environnement plus haut).
+
 ## Ports utilisés
 
 | Service | Port | Note |
@@ -147,6 +166,7 @@ N'ajoutez pas de nouveaux tests dans `test/live/` sans une bonne raison — la c
 | Backend (NestJS) | `3000` | Configurable via la variable d'env `PORT` |
 | Frontend (Next.js) | `3002` | Fixé dans `frontend/package.json` (`next dev -p 3002`) pour éviter le conflit avec le port 3000 du backend |
 | PostgreSQL | `5432` | Local ou via Docker Compose |
+| Redis | `6379` | Optionnel, local ou via Docker Compose — voir [Notifications asynchrones](#notifications-asynchrones-redis--bullmq) |
 | Documentation Swagger | `http://localhost:3000/api/docs` | Backend uniquement, désactivée si `NODE_ENV=production` |
 
 Si vous changez l'un des ports par défaut, mettez à jour en conséquence `FRONTEND_URL` (backend) et `NEXT_PUBLIC_API_URL` (frontend) pour que le CORS et les appels API continuent de fonctionner.
@@ -156,3 +176,4 @@ Si vous changez l'un des ports par défaut, mettez à jour en conséquence `FRON
 - **Backend** : NestJS, TypeScript, Prisma (PostgreSQL)
 - **Frontend** : Next.js, TypeScript, Tailwind CSS, Shadcn UI
 - **Base de données** : PostgreSQL (locale ou via Docker Compose)
+- **File d'attente** : Redis + BullMQ (envoi asynchrone des notifications, optionnel en local — voir [Notifications asynchrones](#notifications-asynchrones-redis--bullmq))

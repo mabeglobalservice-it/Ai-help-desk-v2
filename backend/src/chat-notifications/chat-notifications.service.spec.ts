@@ -84,7 +84,10 @@ describe('ChatNotificationsService', () => {
     expect(body.text).toBe('SLA dépassé');
   });
 
-  it('does not throw when the webhook call fails', async () => {
+  // src/notifications-delivery/ s'appuie sur cette exception : sans elle, ni
+  // le job BullMQ (retry) ni le repli synchrone (log d'avertissement)
+  // n'auraient de moyen de savoir qu'un canal a réellement échoué.
+  it('throws (aggregating both channels) when a webhook call fails', async () => {
     process.env.TEAMS_WEBHOOK_URL = 'https://teams.example.com/webhook';
     process.env.SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/xyz';
     fetchMock.mockRejectedValue(new Error('network down'));
@@ -92,10 +95,10 @@ describe('ChatNotificationsService', () => {
 
     await expect(
       service.sendNotification({ message: 'Ticket assigné' }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(/2\/2/);
   });
 
-  it('logs but does not throw when the webhook responds with a non-2xx status', async () => {
+  it('throws when the webhook responds with a non-2xx status', async () => {
     process.env.TEAMS_WEBHOOK_URL = 'https://teams.example.com/webhook';
     delete process.env.SLACK_WEBHOOK_URL;
     fetchMock.mockResolvedValue({
@@ -103,6 +106,16 @@ describe('ChatNotificationsService', () => {
       status: 400,
       text: () => Promise.resolve('bad request'),
     });
+    const service = buildService();
+
+    await expect(
+      service.sendNotification({ message: 'Ticket assigné' }),
+    ).rejects.toThrow(/1\/2/);
+  });
+
+  it('does not throw when only the disabled/unconfigured channel is skipped and the other succeeds', async () => {
+    process.env.TEAMS_WEBHOOK_URL = 'https://teams.example.com/webhook';
+    delete process.env.SLACK_WEBHOOK_URL;
     const service = buildService();
 
     await expect(
