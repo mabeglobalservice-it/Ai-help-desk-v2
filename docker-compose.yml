@@ -37,6 +37,47 @@ services:
       timeout: 5s
       retries: 5
 
+  # docs/07-architecture-logicielle.md §10, docs/14-plan-deploiement-cloud.md
+  # §3. Nécessite `backend/.env` (voir README, section "Configurer les
+  # variables d'environnement") — absent, `docker compose up` échoue au
+  # démarrage de ce service avec une erreur explicite plutôt qu'un
+  # comportement dégradé silencieux (contrairement à Redis, la config de
+  # base — DATABASE_URL, JWT_SECRET — n'est pas optionnelle).
+  backend:
+    build:
+      context: ./backend
+    container_name: ai-help-desk-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Pas de `condition: service_healthy` ici : Redis reste optionnel
+      # (RM-05) même en Docker — le backend doit démarrer, migrer et servir
+      # des requêtes que Redis soit prêt, en échec, ou absent.
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # docs/07 §10 : NEXT_PUBLIC_API_URL est inline dans le bundle client
+        # au moment du build (voir frontend/Dockerfile) — surchargez cette
+        # variable d'environnement avant `docker compose build` si le
+        # backend n'est pas accessible sur localhost:3000 depuis le
+        # navigateur des utilisateurs (ex. déploiement multi-hôtes).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+    container_name: ai-help-desk-frontend
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:

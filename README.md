@@ -103,6 +103,18 @@ npm run start:dev
 npm run dev
 ```
 
+## Alternative : tout démarrer avec Docker
+
+docs/07-architecture-logicielle.md §10, docs/14-plan-deploiement-cloud.md §3 : `docker-compose.yml` définit aussi des services `backend` et `frontend` (en plus de `postgres`/`redis`), construits depuis `backend/Dockerfile`/`frontend/Dockerfile`. Utile pour vérifier que l'image de production démarre correctement, ou pour un déploiement simple — pas nécessaire pour le développement au quotidien (`npm run start:dev`/`npm run dev` avec rechargement à chaud restent plus rapides).
+
+Prérequis : `backend/.env` doit exister (voir étape 3 ci-dessus) — `docker compose up` échoue explicitement si ce fichier est absent.
+
+```bash
+docker compose up -d --build
+```
+
+Démarre les quatre services : PostgreSQL (`5432`), Redis (`6379`), le backend NestJS compilé (`3000`, migrations appliquées automatiquement au démarrage via `prisma migrate deploy`), et le frontend Next.js compilé en mode `standalone` (`3002`). Le frontend est construit avec `NEXT_PUBLIC_API_URL=http://localhost:3000` par défaut (inline dans le bundle au moment du build, pas au démarrage) — surchargez cette variable d'environnement avant de lancer la commande si le backend n'est pas accessible sur `localhost:3000` depuis le navigateur des utilisateurs.
+
 ## Tests
 
 Le backend a trois familles de tests, avec des implications très différentes en termes de coût et de rapidité :
@@ -177,3 +189,4 @@ Si vous changez l'un des ports par défaut, mettez à jour en conséquence `FRON
 - **Frontend** : Next.js, TypeScript, Tailwind CSS, Shadcn UI
 - **Base de données** : PostgreSQL (locale ou via Docker Compose)
 - **File d'attente** : Redis + BullMQ (envoi asynchrone des notifications, optionnel en local — voir [Notifications asynchrones](#notifications-asynchrones-redis--bullmq))
+- **Conteneurisation** : Docker (`backend/Dockerfile`, `frontend/Dockerfile`) — voir [Alternative : tout démarrer avec Docker](#alternative--tout-démarrer-avec-docker)
