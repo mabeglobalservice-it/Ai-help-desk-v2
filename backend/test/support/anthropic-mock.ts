@@ -32,6 +32,28 @@ type QueueItem = () => Promise<AnthropicToolUseResponse>;
 const queue: QueueItem[] = [];
 const defaultsByTool = new Map<string, () => AnthropicToolUseResponse>();
 
+// Snapshots of the tool call's `input` as it would look mid-stream, queued
+// per-call (FIFO, like `queue` above) for tests exercising
+// `diagnostic.streaming` (AiService.converseDiagnostic, the only caller of
+// `messages.stream()`). Each snapshot is delivered to whatever handler
+// `.on('inputJson', ...)` registers, mirroring the real SDK's
+// `(partialJson, jsonSnapshot)` signature.
+const streamDeltaQueue: Record<string, unknown>[][] = [];
+
+export function queueAnthropicStreamDeltas(
+  snapshots: Record<string, unknown>[],
+): void {
+  streamDeltaQueue.push(snapshots);
+}
+
+interface MockAnthropicStream {
+  on: (
+    event: string,
+    handler: (partialJson: string, jsonSnapshot: unknown) => void,
+  ) => MockAnthropicStream;
+  finalMessage: () => Promise<AnthropicToolUseResponse>;
+}
+
 function randomToolUseId(): string {
   return `toolu_mock_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -131,11 +153,49 @@ export const mockMessagesCreate = jest.fn(
   },
 );
 
+// Same queue/defaults resolution as `mockMessagesCreate` above — tests
+// configure a response via `queueAnthropicResponse()`/`queueAnthropicError()`
+// without needing to know whether AiService calls `.create()` or `.stream()`
+// internally, that's an implementation detail. `queueAnthropicStreamDeltas()`
+// is the only stream-specific addition, for tests asserting on
+// `diagnostic.streaming` deltas.
+export const mockMessagesStream = jest.fn(
+  (params: MessagesCreateParams): MockAnthropicStream => {
+    const deltas = streamDeltaQueue.shift() ?? [];
+    const resultPromise = (async (): Promise<AnthropicToolUseResponse> => {
+      const next = queue.shift();
+      if (next) return next();
+
+      const toolName = params.tool_choice?.name ?? params.tools?.[0]?.name;
+      const byTool = toolName ? defaultsByTool.get(toolName) : undefined;
+      if (byTool) return byTool();
+
+      throw new Error(
+        `anthropic-mock: no response configured for tool "${String(toolName)}" (stream) — ` +
+          'call queueAnthropicResponse() before invoking the AiService method under test.',
+      );
+    })();
+
+    const stream: MockAnthropicStream = {
+      on: (event, handler) => {
+        if (event === 'inputJson') {
+          for (const snapshot of deltas) {
+            handler(JSON.stringify(snapshot), snapshot);
+          }
+        }
+        return stream;
+      },
+      finalMessage: () => resultPromise,
+    };
+    return stream;
+  },
+);
+
 export function anthropicSdkMockFactory() {
   return {
     __esModule: true,
     default: jest.fn().mockImplementation(() => ({
-      messages: { create: mockMessagesCreate },
+      messages: { create: mockMessagesCreate, stream: mockMessagesStream },
     })),
   };
 }
@@ -158,7 +218,9 @@ export function queueAnthropicError(
 
 export function resetAnthropicMock(): void {
   queue.length = 0;
+  streamDeltaQueue.length = 0;
   defaultsByTool.clear();
   registerBuiltinDefaults();
   mockMessagesCreate.mockClear();
+  mockMessagesStream.mockClear();
 }

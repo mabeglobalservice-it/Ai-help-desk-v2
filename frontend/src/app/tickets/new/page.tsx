@@ -17,11 +17,13 @@ import {
   type AutoResolveProposal,
   type ConfigurationItem,
   type ConversationalDiagnosis,
+  type DiagnosticStreamingEvent,
   type Priority,
   type TicketCategory,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { useRealtimeEvent } from "@/lib/use-realtime-event";
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -85,6 +87,11 @@ export default function NewTicketPage() {
   const [isChatSending, setIsChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatDiagnosis, setChatDiagnosis] = useState<ConversationalDiagnosis | null>(null);
+  // docs/11-documentation-api.md §5/§13 (`diagnostic.streaming`) : texte de
+  // l'agent (question ou cause probable) révélé au fil de sa génération,
+  // avant que la réponse HTTP de startOrContinueDiagnostic n'arrive avec le
+  // diagnostic complet. null tant qu'aucune génération n'est en cours.
+  const [chatStreamingText, setChatStreamingText] = useState<string | null>(null);
   const [chatResolved, setChatResolved] = useState(false);
   const [isChatResolving, setIsChatResolving] = useState(false);
   // conversationId to link when the employee confirms the problem persists
@@ -212,6 +219,26 @@ export default function NewTicketPage() {
     setAutoResolveProposal(null);
   }
 
+  // docs/11-documentation-api.md §5/§13 : tant qu'une conversation existe déjà
+  // (chatConversationId connu), n'affiche que les événements qui lui
+  // appartiennent — au tout premier message, le conversationId n'est pas
+  // encore connu côté client, mais un seul envoi est possible à la fois
+  // (isChatSending désactive le bouton), donc accepter tout événement reçu
+  // pendant ce premier envoi est sans risque.
+  useRealtimeEvent<DiagnosticStreamingEvent>("diagnostic.streaming", (event) => {
+    if (chatConversationId && event.conversationId !== chatConversationId) return;
+
+    if (event.status === "started") {
+      setChatStreamingText("");
+    } else if (event.status === "delta") {
+      setChatStreamingText(event.text);
+    } else {
+      // "completed"/"error" : le texte final arrive de toute façon avec la
+      // réponse HTTP (voir handleChatSend) — pas la peine de le garder affiché.
+      setChatStreamingText(null);
+    }
+  });
+
   // docs/06-cas-utilisation.md UC-001 étapes 1-6 : envoie la description
   // initiale, ou la réponse à la dernière question de clarification posée
   // par l'Agent Help Desk.
@@ -250,6 +277,7 @@ export default function NewTicketPage() {
       );
     } finally {
       setIsChatSending(false);
+      setChatStreamingText(null);
     }
   }
 
@@ -425,6 +453,14 @@ export default function NewTicketPage() {
                     </span>
                   </div>
                 ))}
+                {isChatSending && chatStreamingText !== null ? (
+                  <div className="text-left">
+                    <span className="inline-block max-w-[85%] rounded-lg bg-muted px-3 py-1.5 text-sm text-foreground">
+                      {chatStreamingText.length > 0 ? chatStreamingText : "..."}
+                      <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-current align-middle" />
+                    </span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

@@ -2,10 +2,12 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AiService } from './ai.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { AiConversationStatus } from '../../generated/prisma/client';
 import {
   queueAnthropicError,
   queueAnthropicResponse,
+  queueAnthropicStreamDeltas,
   resetAnthropicMock,
   toolUseResponse,
 } from '../../test/support/anthropic-mock';
@@ -31,11 +33,16 @@ describe('AiService', () => {
     aiMessage: { create: jest.Mock };
     systemSettings: { findUnique: jest.Mock };
   };
+  let realtimeGateway: { emitToUser: jest.Mock };
   const originalApiKey = process.env.ANTHROPIC_API_KEY;
 
   async function buildService(): Promise<AiService> {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AiService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        AiService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RealtimeGateway, useValue: realtimeGateway },
+      ],
     }).compile();
 
     return module.get(AiService);
@@ -65,6 +72,7 @@ describe('AiService', () => {
       // row) falls back to DEFAULT_MAX_CLARIFYING_TURNS.
       systemSettings: { findUnique: jest.fn().mockResolvedValue(null) },
     };
+    realtimeGateway = { emitToUser: jest.fn() };
 
     service = await buildService();
   });
@@ -712,6 +720,116 @@ describe('AiService', () => {
         if (result.status !== 'DIAGNOSED') return;
         expect(result.diagnosis.degraded).toBe(true);
       });
+
+      // docs/11-documentation-api.md §5/§13 (`diagnostic.streaming`).
+      describe('diagnostic.streaming', () => {
+        it('emits started, then delta events for the question as it streams in, then completed', async () => {
+          queueAnthropicStreamDeltas([
+            { needsMoreInfo: true, question: 'Le problème concerne' },
+            {
+              needsMoreInfo: true,
+              question: 'Le problème concerne-t-il un seul poste ?',
+            },
+          ]);
+          queueAnthropicResponse(
+            toolUseResponse('continue_diagnostic', {
+              needsMoreInfo: true,
+              question: 'Le problème concerne-t-il un seul poste ?',
+            }),
+          );
+
+          await service.converseDiagnostic(null, 'user-1', 'Ça ne marche pas');
+
+          const events = realtimeGateway.emitToUser.mock.calls
+            .filter(([, event]) => event === 'diagnostic.streaming')
+            .map(([userId, , payload]) => ({ userId, payload }));
+
+          expect(events[0]).toEqual({
+            userId: 'user-1',
+            payload: { conversationId: 'conv-1', status: 'started' },
+          });
+          expect(events[1]).toEqual({
+            userId: 'user-1',
+            payload: {
+              conversationId: 'conv-1',
+              status: 'delta',
+              field: 'question',
+              text: 'Le problème concerne',
+            },
+          });
+          expect(events[2]).toEqual({
+            userId: 'user-1',
+            payload: {
+              conversationId: 'conv-1',
+              status: 'delta',
+              field: 'question',
+              text: 'Le problème concerne-t-il un seul poste ?',
+            },
+          });
+          expect(events[3]).toEqual({
+            userId: 'user-1',
+            payload: { conversationId: 'conv-1', status: 'completed' },
+          });
+        });
+
+        it('emits delta events for causeProbable, not just question, as the diagnosis streams in', async () => {
+          queueAnthropicStreamDeltas([
+            { needsMoreInfo: false, causeProbable: 'Pilote' },
+            {
+              needsMoreInfo: false,
+              causeProbable: 'Pilote graphique corrompu.',
+            },
+          ]);
+          queueAnthropicResponse(
+            toolUseResponse('continue_diagnostic', {
+              needsMoreInfo: false,
+              title: 'Écran bleu',
+              categoryId: 'cat-materiel',
+              priorityId: 'prio-urgente',
+              causeProbable: 'Pilote graphique corrompu.',
+              suggestedSteps: ['Redémarrer en mode sans échec'],
+              confidence: 0.9,
+            }),
+          );
+
+          await service.converseDiagnostic(null, 'user-1', 'Écran bleu');
+
+          const deltaFields = realtimeGateway.emitToUser.mock.calls
+            .map(
+              ([, , payload]) => payload as { status: string; field?: string },
+            )
+            .filter((payload) => payload.status === 'delta')
+            .map((payload) => payload.field);
+
+          expect(deltaFields).toEqual(['causeProbable', 'causeProbable']);
+        });
+
+        it('emits started then error (never completed) when the AI call fails, before falling back to degraded mode', async () => {
+          queueAnthropicError();
+
+          await service.converseDiagnostic(
+            null,
+            'user-1',
+            "L'imprimante ne s'allume plus",
+          );
+
+          const statuses = realtimeGateway.emitToUser.mock.calls
+            .filter(([, event]) => event === 'diagnostic.streaming')
+            .map(([, , payload]) => (payload as { status: string }).status);
+
+          expect(statuses).toEqual(['started', 'error']);
+        });
+      });
+    });
+
+    it('never emits diagnostic.streaming in degraded mode (no API key)', async () => {
+      await service.converseDiagnostic(
+        null,
+        'user-1',
+        "L'imprimante ne s'allume plus",
+      );
+
+      expect(realtimeGateway.emitToUser).not.toHaveBeenCalled();
     });
   });
 

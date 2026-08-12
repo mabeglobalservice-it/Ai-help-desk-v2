@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   AiAgentName,
   AiConversationStatus,
@@ -185,6 +186,24 @@ interface ConversationTurnEvaluation {
   suggestedSteps?: string[];
   confidence?: number;
 }
+
+// docs/11-documentation-api.md §5/§13 : diffusé sur `diagnostic.streaming`
+// pendant l'appel à l'Agent Help Desk (converseDiagnostic). "started"/
+// "completed"/"error" bornent la génération ; "delta" porte le texte
+// progressivement révélé pour les deux seuls champs en prose libre du tool
+// call (question, causeProbable) — categoryId/priorityId/confidence/
+// suggestedSteps sont des métadonnées structurées, pas du texte généré à
+// afficher au fil de l'eau, elles n'arrivent qu'avec la réponse HTTP finale.
+export type DiagnosticStreamingEvent =
+  | { conversationId: string; status: 'started' }
+  | {
+      conversationId: string;
+      status: 'delta';
+      field: 'question' | 'causeProbable';
+      text: string;
+    }
+  | { conversationId: string; status: 'completed' }
+  | { conversationId: string; status: 'error' };
 
 // docs/09-architecture-agents-ia.md §3.2 : contrairement à l'Agent
 // Diagnostic (mots-clés en repli, RM-05), l'Agent Help Desk ne pose jamais
@@ -365,7 +384,10 @@ export class AiService {
     ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     : null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtimeGateway: RealtimeGateway,
+  ) {}
 
   // docs/11-documentation-api.md §6 : un agent désactivé par un Admin, ou
   // un fournisseur actif autre que CLAUDE (le seul réellement intégré),
@@ -741,6 +763,11 @@ export class AiService {
       );
     }
 
+    this.emitDiagnosticStreaming(userId, {
+      conversationId: conversation.id,
+      status: 'started',
+    });
+
     try {
       const startedAt = Date.now();
       const { evaluation, usage } = await this.aiConverseDiagnostic(
@@ -749,9 +776,20 @@ export class AiService {
         categories,
         priorities,
         forceDiagnosis,
+        (field, text) =>
+          this.emitDiagnosticStreaming(userId, {
+            conversationId: conversation.id,
+            status: 'delta',
+            field,
+            text,
+          }),
       );
       const responseTimeMs = Date.now() - startedAt;
       const tokenCost = this.computeTokenCost(usage);
+      this.emitDiagnosticStreaming(userId, {
+        conversationId: conversation.id,
+        status: 'completed',
+      });
 
       if (evaluation.needsMoreInfo && !forceDiagnosis) {
         const question =
@@ -798,6 +836,10 @@ export class AiService {
         'Échec du dialogue IA, repli sur un diagnostic immédiat en mode dégradé (mots-clés locaux)',
         error,
       );
+      this.emitDiagnosticStreaming(userId, {
+        conversationId: conversation.id,
+        status: 'error',
+      });
       return this.degradeToImmediateDiagnosis(
         conversation.id,
         agentId,
@@ -806,6 +848,13 @@ export class AiService {
         priorities,
       );
     }
+  }
+
+  private emitDiagnosticStreaming(
+    userId: string,
+    event: DiagnosticStreamingEvent,
+  ): void {
+    this.realtimeGateway.emitToUser(userId, 'diagnostic.streaming', event);
   }
 
   // docs/11-documentation-api.md §12 (GET/PATCH /admin/settings) : repli sur
@@ -935,6 +984,7 @@ export class AiService {
     categories: CategoryOption[],
     priorities: PriorityOption[],
     forceDiagnosis: boolean,
+    onDelta?: (field: 'question' | 'causeProbable', text: string) => void,
   ): Promise<{
     evaluation: ConversationTurnEvaluation;
     usage: Anthropic.Usage;
@@ -970,7 +1020,17 @@ export class AiService {
           'confidence en conséquence).'
         : '');
 
-    const response = await client.messages.create({
+    // docs/11-documentation-api.md §5/§13 (`diagnostic.streaming`) : seul
+    // appel IA de ce fichier utilisant `messages.stream()` plutôt que
+    // `.create()` — c'est le seul agent dont la réponse est diffusée en
+    // temps réel au frontend. L'événement `inputJson` du SDK fournit déjà un
+    // `jsonSnapshot` du tool call en cours de construction (accumulation
+    // best-effort du JSON partiel) : pas besoin de parser nous-mêmes du JSON
+    // tronqué. On n'en extrait que `question`/`causeProbable` (la seule
+    // prose destinée à l'utilisateur) — categoryId/priorityId/confidence/
+    // suggestedSteps sont des métadonnées, sans intérêt à afficher au fil de
+    // l'eau, elles arrivent de toute façon avec la réponse HTTP finale.
+    const stream = client.messages.stream({
       model: MODEL,
       max_tokens: 768,
       system,
@@ -1027,6 +1087,32 @@ export class AiService {
       ],
       tool_choice: { type: 'tool', name: 'continue_diagnostic' },
     });
+
+    if (onDelta) {
+      let lastQuestion: string | undefined;
+      let lastCauseProbable: string | undefined;
+      stream.on('inputJson', (_partialJson, jsonSnapshot) => {
+        const snapshot =
+          jsonSnapshot as Partial<ConversationTurnEvaluation> | null;
+        if (!snapshot) return;
+        if (
+          typeof snapshot.question === 'string' &&
+          snapshot.question !== lastQuestion
+        ) {
+          lastQuestion = snapshot.question;
+          onDelta('question', lastQuestion);
+        }
+        if (
+          typeof snapshot.causeProbable === 'string' &&
+          snapshot.causeProbable !== lastCauseProbable
+        ) {
+          lastCauseProbable = snapshot.causeProbable;
+          onDelta('causeProbable', lastCauseProbable);
+        }
+      });
+    }
+
+    const response = await stream.finalMessage();
 
     const toolUse = response.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',

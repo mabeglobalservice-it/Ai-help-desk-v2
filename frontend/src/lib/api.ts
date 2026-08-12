@@ -851,6 +851,18 @@ export type DiagnosticTurnResult =
   | { status: "NEEDS_INFO"; conversationId: string; question: string }
   | { status: "DIAGNOSED"; conversationId: string; diagnosis: ConversationalDiagnosis };
 
+// docs/11-documentation-api.md §5/§13 : événement WebSocket `diagnostic.
+// streaming`, diffusé pendant la génération de la réponse de l'Agent Help
+// Desk (voir backend/src/ai/ai.service.ts). "delta" ne porte que la prose
+// destinée à l'utilisateur (question ou causeProbable) — les autres champs
+// du diagnostic (catégorie, priorité, confiance...) n'arrivent qu'avec la
+// réponse HTTP finale de startOrContinueDiagnostic.
+export type DiagnosticStreamingEvent =
+  | { conversationId: string; status: "started" }
+  | { conversationId: string; status: "delta"; field: "question" | "causeProbable"; text: string }
+  | { conversationId: string; status: "completed" }
+  | { conversationId: string; status: "error" };
+
 export function startOrContinueDiagnostic(
   token: string,
   input: { message: string; conversationId?: string },
