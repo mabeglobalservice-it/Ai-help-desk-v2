@@ -50,6 +50,17 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env
+    # Surcharge deliberee de DATABASE_URL/REDIS_URL : `backend/.env` (copie
+    # de .env.example) pointe vers `localhost`, correct pour `npm run
+    # start:dev` en local mais faux ici — a l'interieur du reseau Docker
+    # Compose, le backend doit joindre postgres/redis par leur nom de
+    # service, pas par "localhost" (qui, dans son propre conteneur, ne
+    # designerait que lui-meme). `environment:` a priorite sur `env_file:`
+    # pour une meme cle (comportement standard de Compose), donc un seul
+    # fichier .env reste suffisant pour les deux usages (local et Docker).
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_help_desk?schema=public
+      REDIS_URL: redis://redis:6379
     ports:
       - "3000:3000"
     depends_on:

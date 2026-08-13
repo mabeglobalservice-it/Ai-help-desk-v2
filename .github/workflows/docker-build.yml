@@ -1,0 +1,81 @@
+name: Docker build
+
+# Construit les images backend/frontend et verifie qu'elles demarrent
+# reellement via `docker compose up`, exactement la commande documentee dans
+# le README ("Alternative : tout demarrer avec Docker") — la seule maniere
+# fiable de valider backend/Dockerfile et frontend/Dockerfile sans avoir
+# Docker installe localement pendant le developpement de ce pipeline.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  compose-up:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # backend/.env n'est jamais commite (voir .gitignore) — docker-
+      # compose.yml l'exige (`env_file:`). Memes valeurs factices que
+      # backend-tests.yml : ANTHROPIC_API_KEY presente mais non fonctionnelle
+      # (l'agent IA n'est jamais reellement appele par ce smoke test), aucune
+      # cle Voyage/Resend/Teams/Slack (repli local RM-05 pour chacune).
+      # DATABASE_URL/REDIS_URL sont deliberement absents ici : docker-
+      # compose.yml les surcharge lui-meme vers les noms de service Docker
+      # (postgres/redis), voir le commentaire sur backend.environment.
+      - name: Crée backend/.env pour ce test
+        run: |
+          cat > backend/.env <<'EOF'
+          JWT_SECRET=ci-only-secret-not-used-in-production
+          JWT_EXPIRES_IN=1h
+          REFRESH_TOKEN_EXPIRES_IN_DAYS=30
+          FRONTEND_URL=http://localhost:3002
+          ANTHROPIC_API_KEY=sk-ant-fake-key-for-ci
+          EOF
+
+      - name: Construit et démarre les 4 services
+        run: docker compose up -d --build
+
+      - name: Attend que le backend réponde
+        run: |
+          # Pas de `-f` : on attend precisement un 401 (non authentifie), que
+          # `-f` traiterait comme un echec curl et supprimerait de la sortie
+          # — invalidant ce test. L'assignation est la condition d'un `if`
+          # (et non une simple affectation) specifiquement pour rester
+          # compatible avec `set -e` (shell par defaut des steps GitHub
+          # Actions) pendant les premieres iterations, le temps que le
+          # conteneur accepte des connexions.
+          for i in $(seq 1 40); do
+            if status=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/v1/auth/me); then
+              if [ "$status" = "401" ]; then
+                echo "backend prêt (401 attendu, non authentifié)"
+                exit 0
+              fi
+            fi
+            sleep 3
+          done
+          echo "::error::le backend n'a jamais répondu 401 sur /api/v1/auth/me"
+          exit 1
+
+      - name: Attend que le frontend réponde
+        run: |
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:3002/login -o /dev/null; then
+              echo "frontend prêt"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::le frontend n'a jamais répondu sur /login"
+          exit 1
+
+      - name: Logs (utile en cas d'échec, affiché quoi qu'il arrive)
+        if: always()
+        run: docker compose logs
+
+      - name: Nettoyage
+        if: always()
+        run: docker compose down -v
