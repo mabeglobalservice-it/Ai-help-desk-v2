@@ -25,10 +25,23 @@ FROM node:20-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
+# `dist/generated` (le client Prisma compile, importe par le code compile
+# via des chemins relatifs comme "../../generated/prisma/client") est deja
+# inclus dans cette copie de dist/ — pas besoin de copier /app/generated
+# separement, il ne contient que les sources .ts pre-compilation, jamais
+# executees directement.
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/generated ./generated
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/package.json ./package.json
+# Prisma 7 : `prisma migrate deploy` (et tout le CLI) lit la config
+# datasource depuis ce fichier, pas seulement depuis prisma/schema.prisma —
+# sans lui, la commande echoue avec "datasource.url property is required in
+# your Prisma config file", meme avec DATABASE_URL correctement definie.
+# Trouve et corrige lors du premier run reel de docker-build.yml en CI (le
+# seul environnement ou ce fichier manquant se manifestait — un test hors
+# conteneur avec le repo complet present ne peut pas reveler ce genre
+# d'omission de COPY).
+COPY --from=build /app/prisma.config.ts ./prisma.config.ts
 
 EXPOSE 3000
 
