@@ -6,9 +6,19 @@
 # glibc) plutot qu'une image alpine : bcrypt (dependance native) a des
 # binaires precompiles fiables pour glibc, evitant d'avoir a installer une
 # chaine de compilation (python3/make/g++) juste pour construire l'image.
+# tsconfig*.json doivent etre presents AVANT `npm ci` : le hook postinstall
+# "prisma generate" lit tsconfig.json pour decider le style d'extension des
+# imports qu'il ecrit dans generated/prisma/*.ts (".js", correct et
+# compatible avec la compilation tsc qui suit) — sans lui, il ecrit des
+# imports en ".ts" a la place, qui compilent tel quel (tsc ne les reecrit
+# pas) et cassent au demarrage avec "Cannot find module './internal/
+# class.ts'" (Node ne peut pas requerir un .ts directement). Cause reelle du
+# premier vrai echec de docker-build.yml en CI, introuvable sans reproduire
+# exactement le sous-ensemble de fichiers que copie cette etape (voir
+# l'historique Git de ce fichier pour le detail du diagnostic).
 FROM node:20-slim AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
 COPY prisma ./prisma
 RUN npm ci
 

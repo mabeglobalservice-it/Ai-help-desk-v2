@@ -57,17 +57,7 @@ jobs:
             fi
             sleep 3
           done
-          # Diagnostic temporaire : le step summary et les logs bruts des
-          # steps se sont averes tous deux inaccessibles sans authentification
-          # GitHub — contrairement aux messages d'annotation ("::error::"),
-          # visibles publiquement (page du run ET API check-runs). Encode les
-          # retours a la ligne en %0A (format attendu par les "workflow
-          # commands" de GitHub Actions pour un message multiligne).
-          ps_output=$(docker compose ps -a 2>&1 | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk '{printf "%s%%0A", $0}')
-          echo "::error::COMPOSE PS: $ps_output"
-          logs_output=$(docker compose logs backend --no-color --tail=80 2>&1 | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk '{printf "%s%%0A", $0}')
-          echo "::error::BACKEND LOGS: $logs_output"
-          echo "::error::le backend n'a jamais répondu 401 sur /api/v1/auth/me"
+          echo "::error::le backend n'a jamais répondu 401 sur /api/v1/auth/me — voir le step summary ou les logs de ce run pour le detail"
           exit 1
 
       - name: Attend que le frontend réponde
@@ -82,10 +72,6 @@ jobs:
           echo "::error::le frontend n'a jamais répondu sur /login"
           exit 1
 
-      # Ecrit dans le "step summary" (rendu sur la page du run, visible sans
-      # connexion) plutot que dans la seule sortie console (qui exige une
-      # authentification GitHub pour etre consultee) — utile temporairement
-      # pour diagnostiquer un premier echec sans acces aux logs bruts.
       - name: Logs (utile en cas d'échec, affiché quoi qu'il arrive)
         if: always()
         run: |
