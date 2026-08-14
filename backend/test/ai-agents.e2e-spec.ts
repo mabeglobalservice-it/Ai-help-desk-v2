@@ -191,6 +191,17 @@ describe('AiAgents (e2e)', () => {
         expect.arrayContaining(['CLAUDE', 'OPENAI', 'AZURE_OPENAI']),
       );
       expect(res.body.filter((p: any) => p.isActive)).toHaveLength(1);
+
+      // docs/11-documentation-api.md §6 : seul CLAUDE a une intégration
+      // réelle — OPENAI/AZURE_OPENAI restent sélectionnables (RM-05) mais
+      // signalés comme non implémentés, pour que l'UI admin puisse le
+      // distinguer avant de laisser un Admin les activer par erreur.
+      const byProvider = Object.fromEntries(
+        res.body.map((p: any) => [p.provider, p.isImplemented]),
+      );
+      expect(byProvider.CLAUDE).toBe(true);
+      expect(byProvider.OPENAI).toBe(false);
+      expect(byProvider.AZURE_OPENAI).toBe(false);
     });
 
     it('switches the active provider, deactivating the previous one', async () => {

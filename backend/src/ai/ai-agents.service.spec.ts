@@ -106,7 +106,50 @@ describe('AiAgentsService', () => {
         where: { provider: 'OPENAI' },
         data: { isActive: true },
       });
-      expect(result).toEqual({ provider: 'OPENAI', isActive: true });
+      // docs/11-documentation-api.md §6 : OPENAI n'a pas d'intégration
+      // réelle (voir IMPLEMENTED_AI_PROVIDERS) — l'active quand même
+      // (RM-05, un Admin peut vouloir forcer le mode dégradé), mais le
+      // signale via isImplemented pour que l'UI admin puisse le distinguer.
+      expect(result).toEqual({
+        provider: 'OPENAI',
+        isActive: true,
+        isImplemented: false,
+      });
+    });
+
+    it('marks CLAUDE as implemented', async () => {
+      prisma.aiProviderConfig.findUnique.mockResolvedValue({
+        provider: 'CLAUDE',
+        isActive: false,
+      });
+      prisma.aiProviderConfig.updateMany.mockResolvedValue({ count: 2 });
+      prisma.aiProviderConfig.update.mockResolvedValue({
+        provider: 'CLAUDE',
+        isActive: true,
+      });
+      prisma.$transaction.mockImplementation((ops) => Promise.all(ops));
+
+      const result = await service.setActiveProvider('CLAUDE' as any);
+
+      expect(result.isImplemented).toBe(true);
+    });
+  });
+
+  describe('findAllProviders', () => {
+    it('marks each provider as implemented or not, based on IMPLEMENTED_AI_PROVIDERS', async () => {
+      prisma.aiProviderConfig.findMany.mockResolvedValue([
+        { provider: 'AZURE_OPENAI', isActive: false },
+        { provider: 'CLAUDE', isActive: true },
+        { provider: 'OPENAI', isActive: false },
+      ]);
+
+      const result = await service.findAllProviders();
+
+      expect(result).toEqual([
+        { provider: 'AZURE_OPENAI', isActive: false, isImplemented: false },
+        { provider: 'CLAUDE', isActive: true, isImplemented: true },
+        { provider: 'OPENAI', isActive: false, isImplemented: false },
+      ]);
     });
   });
 

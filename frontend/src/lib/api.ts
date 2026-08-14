@@ -1262,6 +1262,10 @@ export interface AiProviderConfig {
   id: string;
   provider: AiProviderName;
   isActive: boolean;
+  // docs/11-documentation-api.md §6 : seul CLAUDE a une intégration réelle
+  // — les autres restent sélectionnables (RM-05, un Admin peut vouloir
+  // forcer le mode dégradé) mais dégradent tous les agents en silence.
+  isImplemented: boolean;
 }
 
 export function getAiProviders(token: string): Promise<AiProviderConfig[]> {

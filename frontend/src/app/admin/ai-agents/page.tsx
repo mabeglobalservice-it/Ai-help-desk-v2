@@ -58,6 +58,12 @@ export default function AdminAiAgentsPage() {
   const [providerActionError, setProviderActionError] = useState<string | null>(null);
   const [togglingAgentId, setTogglingAgentId] = useState<string | null>(null);
   const [activatingProvider, setActivatingProvider] = useState<AiProviderName | null>(null);
+  // docs/11-documentation-api.md §6 : un fournisseur non implémenté
+  // (isImplemented: false) reste sélectionnable (RM-05), mais exige un
+  // deuxième clic explicite — évite d'activer par erreur un fournisseur qui
+  // dégrade silencieusement tous les agents, sans bloquer le choix
+  // délibéré d'un Admin qui veut vraiment désactiver l'IA.
+  const [pendingConfirmProvider, setPendingConfirmProvider] = useState<AiProviderName | null>(null);
   const [conversationIdInput, setConversationIdInput] = useState("");
   const [conversationCost, setConversationCost] = useState<AiConversationCost | null>(null);
   const [costError, setCostError] = useState<string | null>(null);
@@ -115,6 +121,19 @@ export default function AdminAiAgentsPage() {
     } finally {
       setTogglingAgentId(null);
     }
+  }
+
+  // Fournisseur implémenté : active directement (comportement inchangé).
+  // Fournisseur non implémenté : le premier clic affiche l'avertissement
+  // inline (voir le rendu du tableau) sans rien activer ; seul le deuxième
+  // clic ("Activer quand même") appelle réellement l'API.
+  function requestActivateProvider(providerConfig: AiProviderConfig) {
+    if (!providerConfig.isImplemented && pendingConfirmProvider !== providerConfig.provider) {
+      setPendingConfirmProvider(providerConfig.provider);
+      return;
+    }
+    setPendingConfirmProvider(null);
+    void handleActivateProvider(providerConfig.provider);
   }
 
   async function handleActivateProvider(provider: AiProviderName) {
@@ -286,27 +305,66 @@ export default function AdminAiAgentsPage() {
                         {providers.map((providerConfig) => (
                           <TableRow key={providerConfig.id}>
                             <TableCell className="font-medium">
-                              {PROVIDER_LABELS[providerConfig.provider]}
+                              <div className="flex flex-col gap-1">
+                                <span>{PROVIDER_LABELS[providerConfig.provider]}</span>
+                                {!providerConfig.isImplemented ? (
+                                  <span className="text-xs font-normal text-muted-foreground">
+                                    Non implémenté — dégrade tous les agents (RM-05)
+                                  </span>
+                                ) : null}
+                              </div>
                             </TableCell>
                             <TableCell>
-                              <Badge variant={providerConfig.isActive ? "secondary" : "outline"}>
-                                {providerConfig.isActive ? "Actif" : "Inactif"}
-                              </Badge>
+                              <div className="flex flex-wrap gap-1.5">
+                                <Badge variant={providerConfig.isActive ? "secondary" : "outline"}>
+                                  {providerConfig.isActive ? "Actif" : "Inactif"}
+                                </Badge>
+                                {!providerConfig.isImplemented ? (
+                                  <Badge variant="destructive">Non implémenté</Badge>
+                                ) : null}
+                              </div>
                             </TableCell>
                             <TableCell>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={
-                                  providerConfig.isActive ||
-                                  activatingProvider === providerConfig.provider
-                                }
-                                onClick={() => handleActivateProvider(providerConfig.provider)}
-                              >
-                                {activatingProvider === providerConfig.provider
-                                  ? "..."
-                                  : "Activer"}
-                              </Button>
+                              {pendingConfirmProvider === providerConfig.provider ? (
+                                <div className="flex flex-col items-end gap-1.5">
+                                  <p className="text-xs text-destructive">
+                                    Désactive l&apos;IA pour tous les agents.
+                                  </p>
+                                  <div className="flex gap-1.5">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => setPendingConfirmProvider(null)}
+                                    >
+                                      Annuler
+                                    </Button>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      disabled={activatingProvider === providerConfig.provider}
+                                      onClick={() => requestActivateProvider(providerConfig)}
+                                    >
+                                      {activatingProvider === providerConfig.provider
+                                        ? "..."
+                                        : "Activer quand même"}
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={
+                                    providerConfig.isActive ||
+                                    activatingProvider === providerConfig.provider
+                                  }
+                                  onClick={() => requestActivateProvider(providerConfig)}
+                                >
+                                  {activatingProvider === providerConfig.provider
+                                    ? "..."
+                                    : "Activer"}
+                                </Button>
+                              )}
                             </TableCell>
                           </TableRow>
                         ))}
