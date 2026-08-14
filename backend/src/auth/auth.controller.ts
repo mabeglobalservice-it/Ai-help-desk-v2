@@ -40,10 +40,21 @@ export class AuthController {
   }
 
   private setRefreshTokenCookie(res: Response, refreshToken: string): void {
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie(REFRESH_TOKEN_COOKIE, refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProduction,
+      // docs/14-plan-deploiement-cloud.md §2 : en production, frontend et
+      // backend sont deux services distincts sur des sous-domaines
+      // *.onrender.com (Render) — des "sites" differents au sens moderne du
+      // terme (Public Suffix List), pas juste des ports differents comme en
+      // local. `sameSite: 'lax'` n'est envoye que sur navigation top-level,
+      // jamais sur un fetch()/XHR credentialed cross-site : le refresh
+      // token ne reviendrait jamais au backend, cassant silencieusement
+      // POST /auth/refresh. `'none'` (qui exige `secure: true`, deja le cas
+      // en production) est necessaire ici ; `'lax'` reste correct et plus
+      // strict en local (meme "site" localhost, http non securise).
+      sameSite: isProduction ? 'none' : 'lax',
       path: REFRESH_TOKEN_PATH,
       maxAge: this.refreshTokenMaxAgeMs(),
     });

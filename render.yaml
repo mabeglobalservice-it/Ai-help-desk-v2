@@ -1,0 +1,119 @@
+# Blueprint Render (docs/14-plan-deploiement-cloud.md §2/§4, tiers gratuits
+# Postgres/Key Value/Web Services) — voir README section "Déploiement
+# (Render)" pour la marche à suivre complète (création du Blueprint,
+# secrets à saisir manuellement, création du premier compte Admin).
+#
+# Les deux services web construisent depuis backend/Dockerfile et
+# frontend/Dockerfile, exactement comme docker-compose.yml en local et
+# .github/workflows/docker-build.yml en CI (mêmes images, déjà vérifiées de
+# bout en bout) — aucun Dockerfile ni logique de build spécifique à Render.
+#
+# Référence : https://render.com/docs/blueprint-spec
+
+databases:
+  - name: ai-help-desk-postgres
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"
+    databaseName: ai_help_desk
+    user: ai_help_desk
+    # Le Postgres gratuit Render expire (et est supprimé avec toutes ses
+    # données) 30 jours après sa création, sauf mise à niveau vers un plan
+    # payant avant l'échéance — voir le README pour le détail. Aucune
+    # config ne permet de contourner cette limite depuis render.yaml.
+
+services:
+  # docs/07-architecture-logicielle.md §"Files d'attente (BullMQ)" : le tier
+  # gratuit ne persiste rien sur disque (en mémoire uniquement) — cohérent
+  # avec le repli RM-05 déjà en place (backend/src/notifications-delivery/) :
+  # si ce service redémarre ou est indisponible, le backend retombe
+  # automatiquement sur l'envoi synchrone des notifications, sans erreur.
+  - type: keyvalue
+    name: ai-help-desk-redis
+    plan: free
+    region: oregon
+    # Aucun accès public requis : seul le service backend (même compte,
+    # même région) s'y connecte, via le réseau privé Render — la
+    # connectionString injectée ci-dessous (voir REDIS_URL) l'utilise déjà.
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
+
+  - type: web
+    name: ai-help-desk-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/v1
+    # docs/07 §10 : particulièrement recommandé par Render pour les services
+    # Docker (impossible d'y glisser une étape de migration dans un
+    # "buildCommand" classique, qui n'existe pas pour ce runtime) — s'exécute
+    # une fois par déploiement, avant que la nouvelle version ne prenne le
+    # trafic. Redondant mais inoffensif avec le `prisma migrate deploy` déjà
+    # présent dans le CMD de backend/Dockerfile (idempotent, no-op si rien
+    # à appliquer) : ce dernier reste nécessaire pour un usage du Dockerfile
+    # hors Render (ex. `docker compose up` local, voir docker-build.yml en CI).
+    preDeployCommand: npx prisma migrate deploy
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-help-desk-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: ai-help-desk-redis
+          property: connectionString
+      - key: JWT_EXPIRES_IN
+        value: 1h
+      - key: REFRESH_TOKEN_EXPIRES_IN_DAYS
+        value: "30"
+      # --- Secrets à saisir manuellement dans le dashboard Render lors de
+      # la création du Blueprint (jamais commités) — voir le README pour le
+      # détail de chacun. ---
+      - key: JWT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: TEAMS_WEBHOOK_URL
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      # FRONTEND_URL (CORS, backend/src/main.ts) : URL générée du service
+      # frontend ci-dessous, connue seulement après son premier déploiement
+      # — voir le README. Alternative possible pour éviter cette étape
+      # manuelle : remplacer par un renvoi automatique équivalent à celui de
+      # NEXT_PUBLIC_API_URL plus bas (fromService + envVarKey:
+      # RENDER_EXTERNAL_URL sur ai-help-desk-frontend) ; laissé en sync:
+      # false ici tel que spécifié.
+      - key: FRONTEND_URL
+        sync: false
+
+  - type: web
+    name: ai-help-desk-frontend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    healthCheckPath: /login
+    envVars:
+      # docs/07 §10 : NEXT_PUBLIC_API_URL est inline dans le bundle client
+      # au moment du build (voir frontend/Dockerfile — ARG puis ENV), jamais
+      # relu au démarrage du conteneur. RENDER_EXTERNAL_URL est une variable
+      # que Render injecte automatiquement dans CHAQUE service web avec son
+      # URL publique (ex. https://ai-help-desk-backend.onrender.com) —
+      # `envVarKey` va la lire directement sur le service backend, sans
+      # valeur codée en dur ni étape manuelle.
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: ai-help-desk-backend
+          envVarKey: RENDER_EXTERNAL_URL

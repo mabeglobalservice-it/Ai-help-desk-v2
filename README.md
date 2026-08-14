@@ -115,6 +115,52 @@ docker compose up -d --build
 
 Démarre les quatre services : PostgreSQL (`5432`), Redis (`6379`), le backend NestJS compilé (`3000`, migrations appliquées automatiquement au démarrage via `prisma migrate deploy`), et le frontend Next.js compilé en mode `standalone` (`3002`). Le frontend est construit avec `NEXT_PUBLIC_API_URL=http://localhost:3000` par défaut (inline dans le bundle au moment du build, pas au démarrage) — surchargez cette variable d'environnement avant de lancer la commande si le backend n'est pas accessible sur `localhost:3000` depuis le navigateur des utilisateurs.
 
+## Déploiement (Render)
+
+docs/14-plan-deploiement-cloud.md §2/§4 : déploiement V1-V3 sur un hébergeur gratuit, avant la cible Azure (V4+). `render.yaml` (racine du dépôt) définit un [Blueprint Render](https://render.com/docs/infrastructure-as-code) avec 4 ressources — Postgres, Key Value (Redis, tier gratuit, RM-05), backend et frontend — ces deux derniers construits depuis les mêmes `Dockerfile` que la section Docker ci-dessus, sans logique spécifique à Render.
+
+Cette section est **distincte** des instructions de développement local plus haut : à suivre une seule fois, à la mise en place initiale du déploiement.
+
+### 1. Créer le Blueprint
+
+1. Poussez ce dépôt sur GitHub (déjà fait si vous lisez ce README depuis le dépôt du projet).
+2. Sur [render.com](https://render.com), *New* → *Blueprint*, sélectionnez le dépôt. Render détecte `render.yaml` à la racine et propose les 4 ressources décrites plus haut.
+3. Avant de confirmer, Render vous invite à saisir une valeur pour chaque variable marquée `sync: false` dans `render.yaml` — voir la table ci-dessous. Elles ne sont **jamais commitées** dans le dépôt.
+
+| Variable | Service | Description |
+|---|---|---|
+| `JWT_SECRET` | backend | Secret de signature des JWT. Générer : `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
+| `RESEND_API_KEY` | backend | Optionnelle — voir la table des variables d'environnement plus haut |
+| `ANTHROPIC_API_KEY` | backend | Requise pour le diagnostic IA (sinon repli local RM-05, voir plus haut) |
+| `VOYAGE_API_KEY` | backend | Optionnelle (RAG) — repli local RM-05 si absente |
+| `TEAMS_WEBHOOK_URL` / `SLACK_WEBHOOK_URL` | backend | Optionnelles |
+| `FRONTEND_URL` | backend | URL publique du service frontend (ex. `https://ai-help-desk-frontend.onrender.com`) — **inconnue avant le premier déploiement** : laissez vide pour ce premier déploiement, puis reportez-la une fois le frontend en ligne (Dashboard → service backend → *Environment*) et redéployez le backend. Sert uniquement au CORS ; tant qu'elle est vide ou fausse, l'API reste utilisable mais le navigateur bloque les appels du frontend. |
+
+Le `NEXT_PUBLIC_API_URL` du frontend, lui, est câblé automatiquement (`fromService`/`RENDER_EXTERNAL_URL` dans `render.yaml`) — aucune saisie manuelle nécessaire, y compris au tout premier déploiement.
+
+### 2. Créer le premier compte Admin
+
+`POST /users` exige déjà un Admin authentifié (`RolesGuard`) — sur une base neuve, aucun premier compte n'est donc créable depuis l'application elle-même. `backend/prisma/create-admin.ts` (`npm run create-admin`) résout ce problème : il crée un unique compte `ADMIN` à partir de `ADMIN_EMAIL`/`ADMIN_PASSWORD`/`ADMIN_DISPLAY_NAME` (optionnelle), **seulement si aucun Admin n'existe déjà** — sans risque d'écraser un compte existant en le relançant par erreur.
+
+**Le tier gratuit Render ne donne pas accès au Shell** (`render shell`, réservé aux instances payantes) — ce script se lance donc depuis votre machine, contre la base Postgres de Render via sa *chaîne de connexion externe* (Dashboard → service Postgres → *Connect* → *External Database URL*, accessible par défaut sans configuration réseau supplémentaire, contrairement au Key Value) :
+
+```bash
+cd backend
+DATABASE_URL="<External Database URL du dashboard Render>" \
+ADMIN_EMAIL="vous@example.com" \
+ADMIN_PASSWORD="un-mot-de-passe-solide" \
+npm run create-admin
+```
+
+Connectez-vous ensuite normalement sur le frontend déployé avec cet email/mot de passe. Tous les autres comptes (testeurs) se créent depuis l'application par un Admin (`POST /users`) — pas de comptes de démonstration prévus.
+
+### Limites du tier gratuit à connaître
+
+- **Le Postgres gratuit expire 30 jours après sa création** (puis 14 jours de grâce pour mettre à niveau avant suppression définitive des données) — voir [Render — Deploy for Free](https://render.com/docs/free). Passez le plan du service Postgres à un tier payant avant l'échéance si le déploiement doit durer au-delà d'une démonstration.
+- Les services web gratuits **se mettent en veille après 15 minutes sans trafic** (~1 minute pour redémarrer à la requête suivante) — normal pour un usage de démonstration/tests entre amis, pas pour un usage en continu.
+- Un seul Postgres gratuit et un seul Key Value gratuit par compte Render.
+- Le Key Value gratuit ne persiste rien sur disque (en mémoire uniquement) — cohérent avec le repli RM-05 déjà en place (voir [Notifications asynchrones](#notifications-asynchrones-redis--bullmq)) : un redémarrage ne casse rien, juste une perte du découplage asynchrone le temps que le service revienne.
+
 ## Tests
 
 Le backend a trois familles de tests, avec des implications très différentes en termes de coût et de rapidité :
@@ -190,3 +236,4 @@ Si vous changez l'un des ports par défaut, mettez à jour en conséquence `FRON
 - **Base de données** : PostgreSQL (locale ou via Docker Compose)
 - **File d'attente** : Redis + BullMQ (envoi asynchrone des notifications, optionnel en local — voir [Notifications asynchrones](#notifications-asynchrones-redis--bullmq))
 - **Conteneurisation** : Docker (`backend/Dockerfile`, `frontend/Dockerfile`) — voir [Alternative : tout démarrer avec Docker](#alternative--tout-démarrer-avec-docker)
+- **Déploiement** : Render (Blueprint `render.yaml`, tiers gratuits) — voir [Déploiement (Render)](#déploiement-render)
