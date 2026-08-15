@@ -74,6 +74,15 @@ jobs:
 
       - run: npx prisma migrate deploy
 
+      # Sans cette etape, la base CI reste vide de donnees de reference
+      # (categories, priorites, agents IA, fournisseurs IA...) — au moins
+      # ai-agents.e2e-spec.ts et diagnostics.e2e-spec.ts en dependent
+      # directement (ex. prisma.priority.findFirst()) plutot que de creer
+      # leurs propres fixtures. Reproduit et confirme en local : sur une
+      # base migree mais non semee, ces deux fichiers echouent exactement
+      # comme en CI ; ajouter cette etape les fait repasser au vert.
+      - run: npm run prisma:seed
+
       - run: npm run build
 
       - run: npm run lint

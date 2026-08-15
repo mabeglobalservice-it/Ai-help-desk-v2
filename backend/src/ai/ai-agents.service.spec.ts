@@ -129,7 +129,7 @@ describe('AiAgentsService', () => {
       });
       prisma.$transaction.mockImplementation((ops) => Promise.all(ops));
 
-      const result = await service.setActiveProvider('CLAUDE' as any);
+      const result = await service.setActiveProvider('CLAUDE');
 
       expect(result.isImplemented).toBe(true);
     });
