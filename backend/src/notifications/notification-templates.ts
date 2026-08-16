@@ -57,4 +57,11 @@ export const NOTIFICATION_TEMPLATES: Record<
     description: "Une action d'automatisation a été approuvée ou rejetée.",
     channels: ['IN_APP', 'EMAIL', 'CHAT'],
   },
+  AUTOMATION_INTEGRITY_ANOMALY: {
+    type: 'AUTOMATION_INTEGRITY_ANOMALY',
+    emailSubject: 'Anomalie de sécurité : exécution sans approbation',
+    description:
+      'Un script sensible a été exécuté sans approbation valide associée — ne devrait jamais se produire (docs/14-plan-deploiement-cloud.md §8).',
+    channels: ['IN_APP', 'EMAIL', 'CHAT'],
+  },
 };

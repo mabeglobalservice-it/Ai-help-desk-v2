@@ -2,8 +2,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -43,6 +45,8 @@ const APPROVAL_INCLUDE = {
 
 @Injectable()
 export class AutomationService {
+  private readonly logger = new Logger(AutomationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
@@ -228,6 +232,68 @@ export class AutomationService {
         }
       }),
     );
+  }
+
+  // docs/14-plan-deploiement-cloud.md §8 "Tableau de bord sécurité" : alerte
+  // sur toute exécution d'un script sensible (script.isSensitive) sans
+  // approbation APPROUVÉE associée — ne devrait jamais se produire vu le
+  // parcours normal (requestRun/decideApproval), donc un run qui matche est
+  // un signal d'anomalie (bug, contournement du flux normal, modification
+  // directe en base) plutôt qu'un cas d'usage attendu. Même pattern que
+  // SlaService.checkAndNotifyBreaches (cron 5 min + horodatage
+  // anomalyNotifiedAt pour ne notifier qu'une fois par run).
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async checkForIntegrityAnomalies(): Promise<void> {
+    const anomalousRuns = await this.prisma.automationRun.findMany({
+      where: {
+        script: { isSensitive: true },
+        status: {
+          in: [
+            AutomationRunStatus.RUNNING,
+            AutomationRunStatus.SUCCESS,
+            AutomationRunStatus.FAILED,
+          ],
+        },
+        anomalyNotifiedAt: null,
+        OR: [
+          { approval: null },
+          { approval: { status: { not: ApprovalStatus.APPROVED } } },
+        ],
+      },
+      select: { id: true, script: { select: { name: true } } },
+    });
+
+    if (anomalousRuns.length === 0) return;
+
+    const recipients = await this.prisma.user.findMany({
+      where: { role: { in: [Role.SUPERVISOR, Role.ADMIN] }, isActive: true },
+      select: { id: true },
+    });
+
+    for (const run of anomalousRuns) {
+      try {
+        await Promise.all(
+          recipients.map((recipient) =>
+            this.notificationsService.create({
+              recipientId: recipient.id,
+              type: NotificationType.AUTOMATION_INTEGRITY_ANOMALY,
+              message: `Anomalie de sécurité : l'exécution « ${run.script.name} » (${run.id}) a eu lieu sans approbation valide`,
+            }),
+          ),
+        );
+
+        await this.prisma.automationRun.update({
+          where: { id: run.id },
+          data: { anomalyNotifiedAt: new Date() },
+        });
+      } catch (error) {
+        // best-effort: a failed notification just gets retried on the next check
+        this.logger.error(
+          `Failed to notify integrity anomaly for run ${run.id}`,
+          error,
+        );
+      }
+    }
   }
 
   async findRunById(id: string, requester: Requester) {

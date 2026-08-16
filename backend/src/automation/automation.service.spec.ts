@@ -16,6 +16,7 @@ import {
   ApprovalStatus,
   AutomationRunStatus,
   AutoResolutionStatus,
+  NotificationType,
   Role,
 } from '../../generated/prisma/client';
 
@@ -29,6 +30,7 @@ describe('AutomationService', () => {
       update: jest.Mock;
       findUnique: jest.Mock;
       findUniqueOrThrow: jest.Mock;
+      findMany: jest.Mock;
     };
     approval: {
       create: jest.Mock;
@@ -84,6 +86,7 @@ describe('AutomationService', () => {
         update: jest.fn(),
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn(),
+        findMany: jest.fn(),
       },
       approval: {
         create: jest.fn(),
@@ -602,6 +605,68 @@ describe('AutomationService', () => {
         ticketId: 'ticket-1',
         autoResolutionId: 'autores-2',
       });
+    });
+  });
+
+  // docs/14-plan-deploiement-cloud.md §8 "Tableau de bord sécurité".
+  describe('checkForIntegrityAnomalies', () => {
+    it('does nothing when there are no anomalous runs', async () => {
+      prisma.automationRun.findMany.mockResolvedValue([]);
+
+      await service.checkForIntegrityAnomalies();
+
+      expect(prisma.user.findMany).not.toHaveBeenCalled();
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+
+    it('notifies every active SUPERVISOR/ADMIN and marks the run as notified', async () => {
+      prisma.automationRun.findMany.mockResolvedValue([
+        { id: 'run-1', script: { name: 'Réinitialiser le mot de passe' } },
+      ]);
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'sup-1' },
+        { id: 'admin-1' },
+      ]);
+
+      await service.checkForIntegrityAnomalies();
+
+      expect(prisma.automationRun.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            script: { isSensitive: true },
+            anomalyNotifiedAt: null,
+          }),
+        }),
+      );
+      expect(notificationsService.create).toHaveBeenCalledTimes(2);
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientId: 'sup-1',
+          type: NotificationType.AUTOMATION_INTEGRITY_ANOMALY,
+        }),
+      );
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientId: 'admin-1',
+          type: NotificationType.AUTOMATION_INTEGRITY_ANOMALY,
+        }),
+      );
+      expect(prisma.automationRun.update).toHaveBeenCalledWith({
+        where: { id: 'run-1' },
+        data: { anomalyNotifiedAt: expect.any(Date) },
+      });
+    });
+
+    it('does not mark the run as notified when notifying fails (retried next check)', async () => {
+      prisma.automationRun.findMany.mockResolvedValue([
+        { id: 'run-1', script: { name: 'Réinitialiser le mot de passe' } },
+      ]);
+      prisma.user.findMany.mockResolvedValue([{ id: 'sup-1' }]);
+      notificationsService.create.mockRejectedValue(new Error('DB down'));
+
+      await service.checkForIntegrityAnomalies();
+
+      expect(prisma.automationRun.update).not.toHaveBeenCalled();
     });
   });
 });

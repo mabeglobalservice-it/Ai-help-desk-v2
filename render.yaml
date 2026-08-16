@@ -45,7 +45,11 @@ services:
     region: oregon
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    healthCheckPath: /api/v1
+    # docs/14-plan-deploiement-cloud.md §8 : verifie reellement la
+    # connectivite DB (voir backend/src/health/) plutot qu'un simple "le
+    # serveur repond" — un vrai signal de sante avant que Render y route du
+    # trafic ou redemarre le service.
+    healthCheckPath: /api/v1/health
     # docs/07 §10 : particulièrement recommandé par Render pour les services
     # Docker (impossible d'y glisser une étape de migration dans un
     # "buildCommand" classique, qui n'existe pas pour ce runtime) — s'exécute

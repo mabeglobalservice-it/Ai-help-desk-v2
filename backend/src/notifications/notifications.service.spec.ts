@@ -199,7 +199,7 @@ describe('NotificationsService', () => {
       const result = service.getTemplates();
 
       expect(result).toEqual(Object.values(NOTIFICATION_TEMPLATES));
-      expect(result.length).toBe(6);
+      expect(result.length).toBe(7);
     });
 
     it('includes an emailSubject and at least one channel for every template', () => {

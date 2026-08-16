@@ -172,6 +172,7 @@ enum NotificationType {
   SLA_BREACHED
   APPROVAL_REQUESTED
   AUTOMATION_DECIDED
+  AUTOMATION_INTEGRITY_ANOMALY
 }
 
 model TicketComment {
@@ -462,6 +463,12 @@ model AutomationRun {
   finishedAt    DateTime?           @map("finished_at")
   outputLog     String?             @map("output_log")
   createdAt     DateTime            @default(now()) @map("created_at")
+  // docs/14-plan-deploiement-cloud.md §8 "Tableau de bord sécurité" :
+  // horodatage de la dernière alerte d'anomalie envoyée pour ce run (voir
+  // AutomationService.checkForIntegrityAnomalies) — évite de renotifier à
+  // chaque passage du cron (toutes les 5 min) tant que l'anomalie n'a pas
+  // été traitée manuellement, même pattern que Ticket.slaBreachNotifiedAt.
+  anomalyNotifiedAt DateTime? @map("anomaly_notified_at")
 
   approval Approval?
 
