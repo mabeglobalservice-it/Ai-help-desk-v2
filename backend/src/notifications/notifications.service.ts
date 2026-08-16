@@ -62,17 +62,25 @@ export class NotificationsService {
       ? `${process.env.FRONTEND_URL ?? 'http://localhost:3002'}/tickets/${input.ticketId}`
       : undefined;
 
-    if (recipient) {
-      await this.deliverEmail({
-        to: recipient.email,
-        displayName: recipient.displayName,
-        type: input.type,
-        message: input.message,
-        ticketUrl,
-      });
-    }
-
-    await this.deliverChat({ message: input.message, ticketUrl });
+    // Independantes l'une de l'autre (aucun ordre requis) : en parallele,
+    // pour ne pas cumuler leurs delais de repli RM-05 respectifs quand
+    // Redis/BullMQ est indisponible (voir notifications-delivery.constants.ts
+    // ENQUEUE_TIMEOUT_MS — sequentiel doublerait la latence de chaque appel
+    // a create(), un cout qui se multiplie encore par le nombre de
+    // destinataires notifies pour un meme evenement, ex.
+    // AutomationService.notifyEligibleApprovers).
+    await Promise.all([
+      recipient
+        ? this.deliverEmail({
+            to: recipient.email,
+            displayName: recipient.displayName,
+            type: input.type,
+            message: input.message,
+            ticketUrl,
+          })
+        : Promise.resolve(),
+      this.deliverChat({ message: input.message, ticketUrl }),
+    ]);
 
     return notification;
   }

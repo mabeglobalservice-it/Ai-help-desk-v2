@@ -25,8 +25,27 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # Sans ce service, NotificationsDeliveryService (BullMQ) ne trouve
+      # jamais Redis et retombe systematiquement sur le chemin de repli
+      # RM-05 (voir redis-connection.util.ts) — un cout de latence reel
+      # (~1500ms par enqueue, ENQUEUE_TIMEOUT_MS) qui, cumule sur plusieurs
+      # destinataires (ex. AutomationService.notifyEligibleApprovers), a
+      # deja fait echouer automation.e2e-spec.ts par timeout. Avec Redis
+      # disponible, la CI exerce le chemin normal (celui de la prod, voir
+      # render.yaml) plutot que le repli en permanence.
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_help_desk?schema=public
+      REDIS_URL: redis://localhost:6379
       JWT_SECRET: ci-only-secret-not-used-in-production
       JWT_EXPIRES_IN: 1h
       FRONTEND_URL: http://localhost:3002

@@ -203,24 +203,31 @@ export class AutomationService {
       ticketId: run.ticketId,
     };
 
-    for (const approver of approvers) {
-      this.realtimeGateway.emitToUser(
-        approver.id,
-        'approval.requested',
-        payload,
-      );
-      try {
-        await this.notificationsService.create({
-          recipientId: approver.id,
-          type: NotificationType.APPROVAL_REQUESTED,
-          message,
-          ticketId: run.ticketId ?? undefined,
-        });
-      } catch (error) {
-        // best-effort: a notification failure shouldn't block the request
-        console.error('Failed to notify automation approver', error);
-      }
-    }
+    // En parallele, pas sequentiellement : un approbateur est deja
+    // best-effort (une erreur n'empeche pas les autres), et un for..await
+    // ferait payer le delai de repli RM-05 de create() (voir
+    // NotificationsService.create) une fois par approbateur au lieu d'une
+    // seule fois au total quand Redis/BullMQ est indisponible.
+    await Promise.all(
+      approvers.map(async (approver) => {
+        this.realtimeGateway.emitToUser(
+          approver.id,
+          'approval.requested',
+          payload,
+        );
+        try {
+          await this.notificationsService.create({
+            recipientId: approver.id,
+            type: NotificationType.APPROVAL_REQUESTED,
+            message,
+            ticketId: run.ticketId ?? undefined,
+          });
+        } catch (error) {
+          // best-effort: a notification failure shouldn't block the request
+          console.error('Failed to notify automation approver', error);
+        }
+      }),
+    );
   }
 
   async findRunById(id: string, requester: Requester) {
