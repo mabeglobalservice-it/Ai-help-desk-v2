@@ -40,7 +40,10 @@ describe('KnowledgeService', () => {
     };
     script: { findMany: jest.Mock };
   };
-  let aiService: { summarizeTicketForKnowledgeArticle: jest.Mock };
+  let aiService: {
+    summarizeTicketForKnowledgeArticle: jest.Mock;
+    detectContradictions: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -67,7 +70,10 @@ describe('KnowledgeService', () => {
       },
       script: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    aiService = { summarizeTicketForKnowledgeArticle: jest.fn() };
+    aiService = {
+      summarizeTicketForKnowledgeArticle: jest.fn(),
+      detectContradictions: jest.fn().mockResolvedValue([]),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -337,6 +343,112 @@ describe('KnowledgeService', () => {
       // be exactly 0 — not a value computed from two incompatible vectors.
       expect(result.results).toHaveLength(1);
       expect(result.results[0].rank).toBeCloseTo(0.4, 5);
+    });
+
+    // docs/10-architecture-rag.md §9 (Agent Documentation).
+    describe('contradiction detection', () => {
+      const query = 'imprimante réseau bloquée redémarrage spouleur';
+
+      async function seedTwoMatchingSources() {
+        const content = 'Imprimante réseau bloquée, redémarrage du spouleur';
+        prisma.documentChunk.findMany.mockResolvedValue([
+          {
+            id: 'chunk-ticket',
+            documentId: null,
+            ticketId: 'tkt-1',
+            knowledgeArticleId: null,
+            scriptId: null,
+            knowledgeLevel: 3,
+            ownerId: null,
+            content,
+            embedding: await embed(content),
+            embeddingProvider: 'HASHING',
+          },
+          {
+            id: 'chunk-document',
+            documentId: 'doc-1',
+            ticketId: null,
+            knowledgeArticleId: null,
+            scriptId: null,
+            knowledgeLevel: 2,
+            ownerId: null,
+            content,
+            embedding: await embed(content),
+            embeddingProvider: 'HASHING',
+          },
+        ]);
+        prisma.ticket.findMany.mockResolvedValue([
+          {
+            id: 'tkt-1',
+            reference: 'TCK-0001',
+            title: 'Imprimante bloquée',
+            summary: null,
+            resolvedAt: new Date('2026-01-01'),
+            category: { name: 'Matériel' },
+            priority: { name: 'Moyenne' },
+          },
+        ]);
+        prisma.knowledgeDocument.findMany.mockResolvedValue([
+          { id: 'doc-1', title: 'Procédure imprimante réseau' },
+        ]);
+      }
+
+      it('does not call AiService.detectContradictions when fewer than 2 results are found', async () => {
+        await service.search(query, {
+          userId: 'tech-1',
+          role: Role.TECHNICIAN,
+        });
+
+        expect(aiService.detectContradictions).not.toHaveBeenCalled();
+      });
+
+      it('calls AiService.detectContradictions with the full chunk content of the top results and returns its flags', async () => {
+        await seedTwoMatchingSources();
+        aiService.detectContradictions.mockResolvedValue([
+          {
+            sourceIds: ['tkt-1', 'doc-1'],
+            explanation: 'Procédures différentes',
+          },
+        ]);
+
+        const result = await service.search(query, {
+          userId: 'tech-1',
+          role: Role.TECHNICIAN,
+        });
+
+        expect(result.results.length).toBeGreaterThanOrEqual(2);
+        expect(aiService.detectContradictions).toHaveBeenCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: 'tkt-1',
+              title: 'Imprimante bloquée',
+              content: 'Imprimante réseau bloquée, redémarrage du spouleur',
+            }),
+            expect.objectContaining({
+              id: 'doc-1',
+              title: 'Procédure imprimante réseau',
+              content: 'Imprimante réseau bloquée, redémarrage du spouleur',
+            }),
+          ]),
+        );
+        expect(result.contradictions).toEqual([
+          {
+            sourceIds: ['tkt-1', 'doc-1'],
+            explanation: 'Procédures différentes',
+          },
+        ]);
+      });
+
+      it('returns an empty contradictions array when AiService reports none (RM-05 default)', async () => {
+        await seedTwoMatchingSources();
+
+        const result = await service.search(query, {
+          userId: 'tech-1',
+          role: Role.TECHNICIAN,
+        });
+
+        expect(result.contradictions).toEqual([]);
+      });
     });
   });
 

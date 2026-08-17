@@ -271,6 +271,153 @@ describe('AiService', () => {
     });
   });
 
+  // docs/10-architecture-rag.md §9 (Agent Documentation).
+  describe('detectContradictions', () => {
+    const sources = [
+      {
+        id: 'tkt-1',
+        title: 'Procédure interne (2022)',
+        content:
+          'Redémarrer le poste en mode sans échec puis désinstaller le pilote.',
+      },
+      {
+        id: 'doc-1',
+        title: 'Guide constructeur (2026)',
+        content:
+          'Ne jamais désinstaller le pilote : mettre à jour le firmware suffit.',
+      },
+    ];
+
+    it('returns an empty array when no API key is configured (RM-05, never throws)', async () => {
+      const result = await service.detectContradictions(sources);
+
+      expect(result).toEqual([]);
+    });
+
+    // docs/11-documentation-api.md §6 : un Admin peut désactiver l'agent
+    // Documentation même quand une clé API valide est configurée.
+    it('returns an empty array when the Documentation agent is disabled, even with an API key configured', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+      prisma.aiAgent.findUnique.mockResolvedValue({ isActive: false });
+      prisma.aiProviderConfig.findUnique.mockResolvedValue({ isActive: true });
+      service = await buildService();
+
+      const result = await service.detectContradictions(sources);
+
+      expect(result).toEqual([]);
+      expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith({
+        where: { name: 'DOCUMENTATION' },
+      });
+    });
+
+    // Real-Claude path, mocked Anthropic SDK (see test/support/anthropic-mock.ts).
+    describe('with the AI provider available (mocked)', () => {
+      beforeEach(async () => {
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-fake-key-for-test';
+        service = await buildService();
+      });
+
+      it('maps a reported contradiction to sourceIds/explanation', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('report_contradictions', {
+            contradictions: [
+              {
+                sourceIdA: 'tkt-1',
+                sourceIdB: 'doc-1',
+                explanation:
+                  'La procédure interne recommande de désinstaller le pilote, le guide constructeur le déconseille.',
+              },
+            ],
+          }),
+        );
+
+        const result = await service.detectContradictions(sources);
+
+        expect(result).toEqual([
+          {
+            sourceIds: ['tkt-1', 'doc-1'],
+            explanation:
+              'La procédure interne recommande de désinstaller le pilote, le guide constructeur le déconseille.',
+          },
+        ]);
+      });
+
+      // Observé en pratique (voir aiDetectContradictions) : claude-sonnet-5
+      // renvoie parfois `contradictions` comme une chaîne JSON (parfois
+      // elle-même ré-enveloppée dans { contradictions: [...] }) plutôt que
+      // comme le tableau natif attendu par le schéma — pas une erreur de
+      // l'API, à normaliser plutôt qu'à traiter comme un échec RM-05.
+      it('normalizes contradictions returned as a JSON string instead of a native array', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('report_contradictions', {
+            contradictions: JSON.stringify({
+              contradictions: [
+                { sourceIdA: 'tkt-1', sourceIdB: 'doc-1', explanation: 'x' },
+              ],
+            }),
+          }),
+        );
+
+        const result = await service.detectContradictions(sources);
+
+        expect(result).toEqual([
+          { sourceIds: ['tkt-1', 'doc-1'], explanation: 'x' },
+        ]);
+      });
+
+      it('normalizes contradictions returned as a bare JSON array string', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('report_contradictions', {
+            contradictions: JSON.stringify([
+              { sourceIdA: 'tkt-1', sourceIdB: 'doc-1', explanation: 'y' },
+            ]),
+          }),
+        );
+
+        const result = await service.detectContradictions(sources);
+
+        expect(result).toEqual([
+          { sourceIds: ['tkt-1', 'doc-1'], explanation: 'y' },
+        ]);
+      });
+
+      it('returns an empty array when the AI reports no contradiction', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('report_contradictions', { contradictions: [] }),
+        );
+
+        const result = await service.detectContradictions(sources);
+
+        expect(result).toEqual([]);
+      });
+
+      // Une IA n'est pas infaillible : un id halluciné ou une source citée
+      // contre elle-même ne doit jamais atteindre l'appelant tel quel.
+      it('filters out contradictions referencing an unknown or duplicate source id', async () => {
+        queueAnthropicResponse(
+          toolUseResponse('report_contradictions', {
+            contradictions: [
+              { sourceIdA: 'tkt-1', sourceIdB: 'unknown-id', explanation: 'x' },
+              { sourceIdA: 'tkt-1', sourceIdB: 'tkt-1', explanation: 'y' },
+            ],
+          }),
+        );
+
+        const result = await service.detectContradictions(sources);
+
+        expect(result).toEqual([]);
+      });
+
+      it('returns an empty array (never throws) when the AI call errors or times out', async () => {
+        queueAnthropicError();
+
+        const result = await service.detectContradictions(sources);
+
+        expect(result).toEqual([]);
+      });
+    });
+  });
+
   // docs/05-user-stories.md US-28
   describe('suggestAutomationForTicket', () => {
     const scripts = [

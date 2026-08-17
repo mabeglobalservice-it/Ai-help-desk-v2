@@ -40,9 +40,19 @@ export interface KnowledgeSearchResult {
 // RELEVANCE_THRESHOLD (qui écarte un chunk trop faible pour être utile du
 // tout) : un résultat peut franchir ce seuil sans être une correspondance
 // solide sur laquelle fonder une réponse présentée comme fiable.
+// docs/10-architecture-rag.md §9 (Agent Documentation) : "comparer plusieurs
+// sources et détecter les contradictions". Deux ids de KnowledgeSearchResult
+// (peu importe leur sourceType) que l'Agent Documentation juge en
+// contradiction factuelle, avec une explication.
+export interface KnowledgeContradiction {
+  sourceIds: [string, string];
+  explanation: string;
+}
+
 export interface KnowledgeSearchResponse {
   results: KnowledgeSearchResult[];
   lowConfidence: boolean;
+  contradictions: KnowledgeContradiction[];
 }
 
 interface Requester {
@@ -73,6 +83,10 @@ const MAX_CANDIDATES = 500;
 const TOP_K = 10;
 const COSINE_WEIGHT = 0.6;
 const LEXICAL_WEIGHT = 0.4;
+// Borne le nombre de sources comparées pour la détection de contradictions
+// (coût/latence d'un appel IA) aux résultats qu'un utilisateur consulte
+// réellement — au-delà, les résultats sont de toute façon moins pertinents.
+const CONTRADICTION_CANDIDATE_LIMIT = 5;
 
 const ARTICLE_INCLUDE = {
   ticket: {
@@ -197,8 +211,40 @@ export class KnowledgeService {
     const results = await this.hydrateResults(top, queryTokens);
     const lowConfidence =
       results.length === 0 || results[0].rank < CONFIDENCE_THRESHOLD;
+    const contradictions = await this.detectContradictions(top, results);
 
-    return { results, lowConfidence };
+    return { results, lowConfidence, contradictions };
+  }
+
+  private async detectContradictions(
+    top: { chunk: Prisma.DocumentChunkGetPayload<Record<string, never>> }[],
+    results: KnowledgeSearchResult[],
+  ): Promise<KnowledgeContradiction[]> {
+    if (results.length < 2) return [];
+
+    // Même clé d'origine que bestByOrigin ci-dessus : relie chaque résultat
+    // hydraté (id du ticket/article/script/document) au contenu complet de
+    // son chunk (perdu par hydrateResults, qui ne garde qu'un extrait).
+    const contentByOriginId = new Map(
+      top.map(({ chunk }) => [
+        chunk.documentId ??
+          chunk.ticketId ??
+          chunk.knowledgeArticleId ??
+          chunk.scriptId ??
+          chunk.id,
+        chunk.content,
+      ]),
+    );
+
+    const sources = results
+      .slice(0, CONTRADICTION_CANDIDATE_LIMIT)
+      .map((result) => ({
+        id: result.id,
+        title: result.title,
+        content: contentByOriginId.get(result.id) ?? result.snippet,
+      }));
+
+    return this.aiService.detectContradictions(sources);
   }
 
   private async hydrateResults(

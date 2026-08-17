@@ -531,12 +531,22 @@ export interface KnowledgeSearchResult {
   snippet: string;
 }
 
+// docs/10-architecture-rag.md §9 : l'Agent Documentation compare les sources
+// et signale les contradictions factuelles claires entre deux d'entre elles
+// (sourceIds référence KnowledgeSearchResult.id, peu importe leur
+// sourceType) — jamais de simples différences de formulation.
+export interface KnowledgeContradiction {
+  sourceIds: [string, string];
+  explanation: string;
+}
+
 // docs/10-architecture-rag.md §9 : le backend signale explicitement une
 // confiance de recherche faible plutôt que de laisser croire que tout
 // résultat renvoyé est une source documentée fiable.
 export interface KnowledgeSearchResponse {
   results: KnowledgeSearchResult[];
   lowConfidence: boolean;
+  contradictions: KnowledgeContradiction[];
 }
 
 export function searchKnowledge(token: string, q: string): Promise<KnowledgeSearchResponse> {

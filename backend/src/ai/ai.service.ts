@@ -49,6 +49,25 @@ export interface KnowledgeArticleDraft {
   degraded: boolean;
 }
 
+export interface ContradictionSource {
+  id: string;
+  title: string;
+  content: string;
+}
+
+export interface ContradictionFlag {
+  sourceIds: [string, string];
+  explanation: string;
+}
+
+interface ContradictionReport {
+  contradictions: Array<{
+    sourceIdA: string;
+    sourceIdB: string;
+    explanation: string;
+  }>;
+}
+
 export interface ResolvedTicketSummaryInput {
   title: string;
   summary: string | null;
@@ -62,6 +81,22 @@ const ARTICLE_SYSTEM_PROMPT =
   'rédige un article de base de connaissances concis et réutilisable pour un futur incident ' +
   'similaire : un titre clair et un contenu structuré en deux parties, "Cause probable" et ' +
   '"Solution appliquée". Reste factuel, ne generalise pas au-delà de ce que le ticket décrit.';
+
+// docs/10-architecture-rag.md §9 (Agent Documentation) : "comparer plusieurs
+// sources et détecter les contradictions (ex. une procédure interne obsolète
+// qui contredit un guide constructeur plus récent)". Volontairement strict :
+// un faux positif (deux sources complémentaires signalées à tort comme
+// contradictoires) nuirait plus à la confiance qu'une contradiction ratée.
+const CONTRADICTION_SYSTEM_PROMPT =
+  "Tu es l'Agent Documentation d'un service d'assistance informatique interne. " +
+  'On te fournit plusieurs sources (tickets résolus, articles, scripts, documents) ' +
+  "issues d'une même recherche. Compare-les et signale UNIQUEMENT les contradictions " +
+  'factuelles claires entre deux sources précises (ex. une procédure obsolète qui ' +
+  'contredit un guide plus récent, deux sources donnant une commande, un réglage ou ' +
+  'une cause différente pour le même problème). Ne signale JAMAIS une simple différence ' +
+  'de niveau de détail, de formulation, ou des sujets complémentaires mais non ' +
+  "contradictoires. S'il n'y a aucune contradiction claire et factuelle, renvoie une " +
+  'liste vide plutôt que de forcer un signalement douteux.';
 
 // docs/05-user-stories.md US-28: "le système prépare une action ... afin de
 // gagner du temps sur la saisie manuelle" — jamais une exécution directe
@@ -1441,6 +1476,145 @@ export class AiService {
       content: lines.join('\n'),
       degraded: true,
     };
+  }
+
+  // docs/10-architecture-rag.md §9 (Agent Documentation). Contrairement au
+  // reste des repli RM-05 de ce service (qui produisent une réponse locale
+  // dégradée), il n'existe pas d'équivalent local fiable pour détecter une
+  // contradiction factuelle entre deux textes — mieux vaut ne signaler
+  // aucune contradiction que d'en inventer une par heuristique. Ne lève
+  // jamais : un échec ici ne doit jamais empêcher KnowledgeService.search()
+  // de renvoyer ses résultats.
+  async detectContradictions(
+    sources: ContradictionSource[],
+  ): Promise<ContradictionFlag[]> {
+    if (
+      !this.client ||
+      !(await this.checkAgentStatus(AiAgentName.DOCUMENTATION)).enabled
+    ) {
+      return [];
+    }
+
+    try {
+      return await this.aiDetectContradictions(this.client, sources);
+    } catch (error) {
+      this.logger.error(
+        'Échec de la détection de contradictions RAG (repli : aucun signal renvoyé)',
+        error,
+      );
+      return [];
+    }
+  }
+
+  // Observé en pratique (tool-use, claude-sonnet-5) : le modèle renvoie
+  // parfois `contradictions` comme une chaîne JSON imbriquée (parfois
+  // elle-même ré-enveloppée dans un objet { contradictions: [...] })
+  // plutôt que comme le tableau natif demandé par le schéma — sans que ce
+  // soit une erreur de l'API. Normalise les deux formes plutôt que de
+  // dépendre du filet de sécurité RM-05 (repli silencieux vers []) pour un
+  // cas qui n'est pas réellement un échec.
+  private normalizeContradictions(
+    raw: unknown,
+  ): ContradictionReport['contradictions'] {
+    if (Array.isArray(raw)) {
+      return raw as ContradictionReport['contradictions'];
+    }
+    if (typeof raw === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed as ContradictionReport['contradictions'];
+        }
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as ContradictionReport).contradictions)
+        ) {
+          return (parsed as ContradictionReport).contradictions;
+        }
+      } catch {
+        // repli RM-05 ci-dessous : tableau vide
+      }
+    }
+    return [];
+  }
+
+  private async aiDetectContradictions(
+    client: Anthropic,
+    sources: ContradictionSource[],
+  ): Promise<ContradictionFlag[]> {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 768,
+      system: CONTRADICTION_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: sources
+            .map(
+              (source) =>
+                `Source id="${source.id}" — « ${source.title} » :\n${source.content}`,
+            )
+            .join('\n\n---\n\n'),
+        },
+      ],
+      tools: [
+        {
+          name: 'report_contradictions',
+          description:
+            'Signale les contradictions factuelles claires entre les sources fournies',
+          input_schema: {
+            type: 'object',
+            properties: {
+              contradictions: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    sourceIdA: {
+                      type: 'string',
+                      description: 'id de la première source en contradiction',
+                    },
+                    sourceIdB: {
+                      type: 'string',
+                      description: 'id de la seconde source en contradiction',
+                    },
+                    explanation: {
+                      type: 'string',
+                      description:
+                        'Explication concise et factuelle de la contradiction',
+                    },
+                  },
+                  required: ['sourceIdA', 'sourceIdB', 'explanation'],
+                },
+              },
+            },
+            required: ['contradictions'],
+          },
+        },
+      ],
+      tool_choice: { type: 'tool', name: 'report_contradictions' },
+    });
+
+    const toolUse = response.content.find(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+    );
+    if (!toolUse) return [];
+
+    const report = toolUse.input as ContradictionReport;
+    const validIds = new Set(sources.map((source) => source.id));
+
+    return this.normalizeContradictions(report.contradictions)
+      .filter(
+        (c) =>
+          validIds.has(c.sourceIdA) &&
+          validIds.has(c.sourceIdB) &&
+          c.sourceIdA !== c.sourceIdB,
+      )
+      .map((c) => ({
+        sourceIds: [c.sourceIdA, c.sourceIdB],
+        explanation: c.explanation,
+      }));
   }
 
   // docs/05-user-stories.md US-28. Returns null when nothing in the

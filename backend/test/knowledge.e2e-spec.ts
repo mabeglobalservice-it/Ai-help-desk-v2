@@ -8,6 +8,10 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { KnowledgeService } from '../src/knowledge/knowledge.service';
 import { Role, TicketStatus } from '../generated/prisma/client';
+import {
+  queueAnthropicResponse,
+  toolUseResponse,
+} from './support/anthropic-mock';
 
 // Mocks the Anthropic SDK so resolving a ticket (which triggers the Agent
 // Documentation's article proposal, docs/10-architecture-rag.md §11) never
@@ -341,6 +345,57 @@ describe('Knowledge (e2e)', () => {
     // docs/10-architecture-rag.md §9 : une correspondance forte et sans
     // ambiguïté ne doit pas être signalée comme peu fiable.
     expect(res.body.lowConfidence).toBe(false);
+  });
+
+  // docs/10-architecture-rag.md §9 (Agent Documentation) : "comparer
+  // plusieurs sources et détecter les contradictions".
+  it('surfaces a contradiction reported by the Agent Documentation between two matching sources', async () => {
+    const uploaded = await apiRequest(app)
+      .post('/knowledge/documents')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        title: 'Procédure imprimante réseau (obsolète)',
+        content:
+          'Imprimante bloquée : ne jamais redémarrer le spouleur, réinstaller le pilote à la place.',
+        knowledgeLevel: 2,
+      })
+      .expect(201);
+    const documentId = uploaded.body.id;
+
+    queueAnthropicResponse(
+      toolUseResponse('report_contradictions', {
+        contradictions: [
+          {
+            sourceIdA: printerTicketId,
+            sourceIdB: documentId,
+            explanation:
+              'Le ticket redémarre le spouleur, la procédure déconseille de le faire.',
+          },
+        ],
+      }),
+    );
+
+    const res = await apiRequest(app)
+      .get('/knowledge/search')
+      .query({ q: 'imprimante bloquée' })
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .expect(200);
+
+    const ids = res.body.results.map((row: any) => row.id);
+    expect(ids).toContain(printerTicketId);
+    expect(ids).toContain(documentId);
+    expect(res.body.contradictions).toEqual([
+      {
+        sourceIds: [printerTicketId, documentId],
+        explanation:
+          'Le ticket redémarre le spouleur, la procédure déconseille de le faire.',
+      },
+    ]);
+
+    await apiRequest(app)
+      .delete(`/knowledge/documents/${documentId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
   });
 
   it('finds a different ticket for an unrelated query', async () => {

@@ -7,6 +7,7 @@ import {
   createKnowledgeDocument,
   deleteKnowledgeDocument,
   searchKnowledge,
+  type KnowledgeContradiction,
   type KnowledgeSearchResult,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
@@ -84,6 +85,7 @@ export default function KnowledgePage() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<KnowledgeSearchResult[] | null>(null);
   const [lowConfidence, setLowConfidence] = useState(false);
+  const [contradictions, setContradictions] = useState<KnowledgeContradiction[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -117,6 +119,7 @@ export default function KnowledgePage() {
       const data = await searchKnowledge(token, q.trim());
       setResults(data.results);
       setLowConfidence(data.lowConfidence);
+      setContradictions(data.contradictions);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         clearSession();
@@ -244,6 +247,28 @@ export default function KnowledgePage() {
                     <AlertDescription>
                       Pertinence faible : ces résultats sont les plus proches trouvés, mais aucun
                       ne correspond fortement à la recherche. À vérifier avant de vous y fier.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                {contradictions.length > 0 ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      <div className="flex flex-col gap-1">
+                        <span className="font-medium">
+                          Contradiction détectée entre ces sources — vérifiez laquelle est encore
+                          valide avant de vous y fier :
+                        </span>
+                        {contradictions.map((contradiction, index) => {
+                          const [titleA, titleB] = contradiction.sourceIds.map(
+                            (id) => results.find((r) => r.id === id)?.title ?? "Source inconnue",
+                          );
+                          return (
+                            <span key={index}>
+                              « {titleA} » contredit « {titleB} » : {contradiction.explanation}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </AlertDescription>
                   </Alert>
                 ) : null}
