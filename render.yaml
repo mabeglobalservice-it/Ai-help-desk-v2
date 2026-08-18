@@ -50,15 +50,12 @@ services:
     # serveur repond" — un vrai signal de sante avant que Render y route du
     # trafic ou redemarre le service.
     healthCheckPath: /api/v1/health
-    # docs/07 §10 : particulièrement recommandé par Render pour les services
-    # Docker (impossible d'y glisser une étape de migration dans un
-    # "buildCommand" classique, qui n'existe pas pour ce runtime) — s'exécute
-    # une fois par déploiement, avant que la nouvelle version ne prenne le
-    # trafic. Redondant mais inoffensif avec le `prisma migrate deploy` déjà
-    # présent dans le CMD de backend/Dockerfile (idempotent, no-op si rien
-    # à appliquer) : ce dernier reste nécessaire pour un usage du Dockerfile
-    # hors Render (ex. `docker compose up` local, voir docker-build.yml en CI).
-    preDeployCommand: npx prisma migrate deploy
+    # Pas de preDeployCommand ici : indisponible sur le tier gratuit Render
+    # ("pre-deploy command is not supported for free tier services"). Pas un
+    # probleme : `npx prisma migrate deploy` est deja dans le CMD de
+    # backend/Dockerfile (idempotent, no-op si rien a appliquer), execute a
+    # chaque demarrage du conteneur — suffisant pour un deploiement a
+    # instance unique (voir Dockerfile pour le detail).
     envVars:
       - key: NODE_ENV
         value: production
