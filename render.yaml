@@ -90,15 +90,17 @@ services:
         sync: false
       - key: SLACK_WEBHOOK_URL
         sync: false
-      # FRONTEND_URL (CORS, backend/src/main.ts) : URL générée du service
-      # frontend ci-dessous, connue seulement après son premier déploiement
-      # — voir le README. Alternative possible pour éviter cette étape
-      # manuelle : remplacer par un renvoi automatique équivalent à celui de
-      # NEXT_PUBLIC_API_URL plus bas (fromService + envVarKey:
-      # RENDER_EXTERNAL_URL sur ai-help-desk-frontend) ; laissé en sync:
-      # false ici tel que spécifié.
+      # FRONTEND_URL (CORS, backend/src/main.ts) : auto-branchee sur l'URL
+      # publique reelle du service frontend ci-dessous, exactement comme
+      # NEXT_PUBLIC_API_URL le fait dans l'autre sens pour le frontend.
+      # Plus d'etape manuelle a faire/oublier apres le premier deploiement —
+      # corrige un bug reel observe (CORS bloque tant que cette valeur reste
+      # a sa valeur par defaut localhost:3002 dans main.ts).
       - key: FRONTEND_URL
-        sync: false
+        fromService:
+          type: web
+          name: ai-help-desk-frontend
+          envVarKey: RENDER_EXTERNAL_URL
 
   - type: web
     name: ai-help-desk-frontend

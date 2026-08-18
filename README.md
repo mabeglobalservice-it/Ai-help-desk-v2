@@ -134,9 +134,8 @@ Cette section est **distincte** des instructions de développement local plus ha
 | `ANTHROPIC_API_KEY` | backend | Requise pour le diagnostic IA (sinon repli local RM-05, voir plus haut) |
 | `VOYAGE_API_KEY` | backend | Optionnelle (RAG) — repli local RM-05 si absente |
 | `TEAMS_WEBHOOK_URL` / `SLACK_WEBHOOK_URL` | backend | Optionnelles |
-| `FRONTEND_URL` | backend | URL publique du service frontend (ex. `https://ai-help-desk-frontend.onrender.com`) — **inconnue avant le premier déploiement** : laissez vide pour ce premier déploiement, puis reportez-la une fois le frontend en ligne (Dashboard → service backend → *Environment*) et redéployez le backend. Sert uniquement au CORS ; tant qu'elle est vide ou fausse, l'API reste utilisable mais le navigateur bloque les appels du frontend. |
 
-Le `NEXT_PUBLIC_API_URL` du frontend, lui, est câblé automatiquement (`fromService`/`RENDER_EXTERNAL_URL` dans `render.yaml`) — aucune saisie manuelle nécessaire, y compris au tout premier déploiement.
+`FRONTEND_URL` (backend, CORS) et `NEXT_PUBLIC_API_URL` (frontend) sont tous les deux câblés automatiquement (`fromService`/`RENDER_EXTERNAL_URL` dans `render.yaml`) sur l'URL publique réelle de l'autre service — aucune saisie manuelle nécessaire, y compris au tout premier déploiement. (Historique : `FRONTEND_URL` exigeait autrefois une étape manuelle après coup ; ça causait un blocage CORS silencieux — "Impossible de se connecter" côté frontend — tant qu'elle n'était pas reportée à la main. Corrigé en l'auto-branchant comme `NEXT_PUBLIC_API_URL`.)
 
 ### 2. Créer le premier compte Admin
 
