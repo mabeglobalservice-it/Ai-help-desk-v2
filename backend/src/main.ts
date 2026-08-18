@@ -4,11 +4,21 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+  // CSP par defaut de Helmet cassee le Swagger UI (scripts/styles inline) :
+  // desactivee en dev/staging ou Swagger est monte (voir plus bas), activee
+  // en production ou seule l'API JSON est servie.
+  app.use(
+    helmet({
+      contentSecurityPolicy:
+        process.env.NODE_ENV === 'production' ? undefined : false,
+    }),
+  );
   // docs/11 §1 : toutes les routes REST sont prefixees par /api/v1
   // (n'affecte pas Swagger, monte separement sur /api/docs ci-dessous).
   app.setGlobalPrefix('api/v1');
