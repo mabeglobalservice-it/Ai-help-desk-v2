@@ -554,6 +554,34 @@ export function searchKnowledge(token: string, q: string): Promise<KnowledgeSear
   return apiFetch<KnowledgeSearchResponse>(`/knowledge/search?${params.toString()}`, token);
 }
 
+// docs/10-architecture-rag.md §12 "Supervision et qualité" : chaque champ
+// vient d'une donnée réellement enregistrée (voir backend
+// KnowledgeService.getQualityMetrics), jamais estimé — null quand
+// l'historique de recherche est encore vide plutôt qu'une valeur inventée.
+export interface RagQualityMetrics {
+  totalSearches: number;
+  avgLatencyMs: number | null;
+  avgConfidence: number | null;
+  relevantResponseRate: number | null;
+  aiCost: { totalTokenCost: number; callCount: number };
+  topDocuments: Array<{
+    originId: string;
+    sourceType: string;
+    title: string;
+    timesReturned: number;
+  }>;
+  staleDocuments: Array<{
+    id: string;
+    title: string;
+    knowledgeLevel: number;
+    createdAt: string;
+  }>;
+}
+
+export function getRagQualityMetrics(token: string): Promise<RagQualityMetrics> {
+  return apiFetch<RagQualityMetrics>("/knowledge/quality-metrics", token);
+}
+
 export interface KnowledgeDocument {
   id: string;
   title: string;

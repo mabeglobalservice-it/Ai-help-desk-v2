@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -55,6 +56,31 @@ export interface KnowledgeSearchResponse {
   contradictions: KnowledgeContradiction[];
 }
 
+// docs/10-architecture-rag.md §12 "Supervision et qualité" — un indicateur
+// par ligne du tableau, dans l'ordre du document (à l'exception du "taux de
+// réponses pertinentes", qui n'a pas de signal de feedback dédié à la
+// recherche RAG aujourd'hui : approximé par relevantResponseRate, le taux
+// de recherches NON signalées lowConfidence, plutôt qu'inventé ou omis).
+export interface RagQualityMetrics {
+  totalSearches: number;
+  avgLatencyMs: number | null;
+  avgConfidence: number | null;
+  relevantResponseRate: number | null;
+  aiCost: { totalTokenCost: number; callCount: number };
+  topDocuments: Array<{
+    originId: string;
+    sourceType: string;
+    title: string;
+    timesReturned: number;
+  }>;
+  staleDocuments: Array<{
+    id: string;
+    title: string;
+    knowledgeLevel: number;
+    createdAt: Date;
+  }>;
+}
+
 interface Requester {
   userId: string;
   role: Role;
@@ -83,6 +109,12 @@ const MAX_CANDIDATES = 500;
 const TOP_K = 10;
 const COSINE_WEIGHT = 0.6;
 const LEXICAL_WEIGHT = 0.4;
+// docs/10-architecture-rag.md §12 : un KnowledgeDocument plus vieux que ce
+// seuil et jamais renvoyé par aucune recherche est considéré "obsolète"
+// (candidat à révision/retrait) — assez de délai pour avoir eu une chance
+// raisonnable d'être recherché au moins une fois.
+const STALE_DOCUMENT_MIN_AGE_DAYS = 14;
+const TOP_DOCUMENTS_LIMIT = 10;
 // Borne le nombre de sources comparées pour la détection de contradictions
 // (coût/latence d'un appel IA) aux résultats qu'un utilisateur consulte
 // réellement — au-delà, les résultats sont de toute façon moins pertinents.
@@ -138,6 +170,8 @@ function buildSnippet(content: string, queryTokens: string[]): string {
 // jamais comparés entre eux.
 @Injectable()
 export class KnowledgeService {
+  private readonly logger = new Logger(KnowledgeService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly aiService: AiService,
@@ -150,6 +184,7 @@ export class KnowledgeService {
     query: string,
     requester: Requester,
   ): Promise<KnowledgeSearchResponse> {
+    const startedAt = Date.now();
     const queryTokens = tokenize(query);
     const { vector: queryVector, provider: queryProvider } =
       await embedWithProvider(query);
@@ -213,6 +248,35 @@ export class KnowledgeService {
       results.length === 0 || results[0].rank < CONFIDENCE_THRESHOLD;
     const contradictions = await this.detectContradictions(top, results);
 
+    // docs/10-architecture-rag.md §12 : alimente KnowledgeService.
+    // getQualityMetrics(). Best-effort — jamais laisser un souci
+    // d'enregistrement des métriques faire échouer une recherche.
+    try {
+      await this.prisma.searchLog.create({
+        data: {
+          requesterId: requester.userId,
+          query,
+          latencyMs: Date.now() - startedAt,
+          resultCount: results.length,
+          lowConfidence,
+          results: {
+            create: results.map((result, position) => ({
+              originId: result.id,
+              sourceType: result.sourceType,
+              title: result.title,
+              rank: result.rank,
+              position,
+            })),
+          },
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        "Échec de l'enregistrement du SearchLog (métriques de qualité RAG)",
+        error,
+      );
+    }
+
     return { results, lowConfidence, contradictions };
   }
 
@@ -245,6 +309,81 @@ export class KnowledgeService {
       }));
 
     return this.aiService.detectContradictions(sources);
+  }
+
+  // docs/10-architecture-rag.md §12 "Supervision et qualité". Toutes les
+  // requêtes s'appuient sur des données réellement enregistrées
+  // (SearchLog/SearchLogResult ci-dessus, AiMessage.tokenCost déjà existant
+  // pour docs/11 §6) — aucun indicateur n'est estimé ou simulé.
+  async getQualityMetrics(): Promise<RagQualityMetrics> {
+    const [
+      totalSearches,
+      lowConfidenceCount,
+      latencyAgg,
+      topResultConfidenceAgg,
+      aiCostAgg,
+      topDocumentsRaw,
+    ] = await Promise.all([
+      this.prisma.searchLog.count(),
+      this.prisma.searchLog.count({ where: { lowConfidence: true } }),
+      this.prisma.searchLog.aggregate({ _avg: { latencyMs: true } }),
+      this.prisma.searchLogResult.aggregate({
+        where: { position: 0 },
+        _avg: { rank: true },
+      }),
+      this.prisma.aiMessage.aggregate({
+        where: { tokenCost: { not: null } },
+        _sum: { tokenCost: true },
+        _count: true,
+      }),
+      this.prisma.searchLogResult.groupBy({
+        by: ['originId', 'sourceType', 'title'],
+        _count: { originId: true },
+        orderBy: { _count: { originId: 'desc' } },
+        take: TOP_DOCUMENTS_LIMIT,
+      }),
+    ]);
+
+    const returnedOriginIds = (
+      await this.prisma.searchLogResult.findMany({
+        distinct: ['originId'],
+        select: { originId: true },
+      })
+    ).map((r) => r.originId);
+
+    const staleDocuments = await this.prisma.knowledgeDocument.findMany({
+      where: {
+        id: { notIn: returnedOriginIds },
+        createdAt: {
+          lt: new Date(
+            Date.now() - STALE_DOCUMENT_MIN_AGE_DAYS * 24 * 60 * 60 * 1000,
+          ),
+        },
+      },
+      select: { id: true, title: true, knowledgeLevel: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return {
+      totalSearches,
+      avgLatencyMs: latencyAgg._avg.latencyMs,
+      avgConfidence: topResultConfidenceAgg._avg.rank,
+      relevantResponseRate:
+        totalSearches === 0
+          ? null
+          : (totalSearches - lowConfidenceCount) / totalSearches,
+      aiCost: {
+        totalTokenCost: aiCostAgg._sum.tokenCost?.toNumber() ?? 0,
+        callCount: aiCostAgg._count,
+      },
+      topDocuments: topDocumentsRaw.map((row) => ({
+        originId: row.originId,
+        sourceType: row.sourceType,
+        title: row.title,
+        timesReturned: row._count.originId,
+      })),
+      staleDocuments,
+    };
   }
 
   private async hydrateResults(

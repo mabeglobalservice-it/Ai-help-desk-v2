@@ -649,4 +649,56 @@ describe('Knowledge (e2e)', () => {
         .expect(404);
     });
   });
+
+  // docs/10-architecture-rag.md §12 "Supervision et qualité".
+  describe('GET /knowledge/quality-metrics', () => {
+    it('rejects a TECHNICIAN (réservé SUPERVISOR/ADMIN)', async () => {
+      await apiRequest(app)
+        .get('/knowledge/quality-metrics')
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(403);
+    });
+
+    it('reflects real searches performed since the previous check (delta-based, robust to other tests running searches)', async () => {
+      const before = await apiRequest(app)
+        .get('/knowledge/quality-metrics')
+        .set('Authorization', `Bearer ${supervisorToken}`)
+        .expect(200);
+
+      await apiRequest(app)
+        .get('/knowledge/search')
+        .query({ q: 'imprimante bloquée' })
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+      await apiRequest(app)
+        .get('/knowledge/search')
+        .query({ q: 'imprimante bloquée' })
+        .set('Authorization', `Bearer ${technicianToken}`)
+        .expect(200);
+
+      const after = await apiRequest(app)
+        .get('/knowledge/quality-metrics')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      expect(after.body.totalSearches).toBeGreaterThanOrEqual(
+        before.body.totalSearches + 2,
+      );
+      expect(typeof after.body.avgLatencyMs).toBe('number');
+      expect(typeof after.body.avgConfidence).toBe('number');
+      expect(after.body.relevantResponseRate).toBeGreaterThanOrEqual(0);
+      expect(after.body.relevantResponseRate).toBeLessThanOrEqual(1);
+      expect(after.body.aiCost).toEqual(
+        expect.objectContaining({
+          totalTokenCost: expect.any(Number),
+          callCount: expect.any(Number),
+        }),
+      );
+      expect(
+        after.body.topDocuments.some(
+          (doc: any) => doc.originId === printerTicketId,
+        ),
+      ).toBe(true);
+    });
+  });
 });

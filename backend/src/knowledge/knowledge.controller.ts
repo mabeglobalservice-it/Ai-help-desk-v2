@@ -80,6 +80,17 @@ export class KnowledgeController {
   }
 
   @ApiOperation({
+    summary: 'Indicateurs de qualité de la recherche RAG (doc 10 §12)',
+    description:
+      'Réservé aux rôles SUPERVISOR, ADMIN. Temps de recherche, score moyen de confiance, taux de réponses pertinentes, coût des appels IA, documents les plus consultés/obsolètes.',
+  })
+  @Roles(Role.SUPERVISOR, Role.ADMIN)
+  @Get('quality-metrics')
+  getQualityMetrics() {
+    return this.knowledgeService.getQualityMetrics();
+  }
+
+  @ApiOperation({
     summary: "Liste des articles de connaissance en attente d'approbation",
     description:
       'Réservé aux rôles SUPERVISOR, ADMIN (simplification de "Technicien senior" du doc 11 §7, non modélisé dans ce projet)',

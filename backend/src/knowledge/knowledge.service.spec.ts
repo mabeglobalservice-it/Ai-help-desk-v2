@@ -39,6 +39,13 @@ describe('KnowledgeService', () => {
       delete: jest.Mock;
     };
     script: { findMany: jest.Mock };
+    searchLog: { create: jest.Mock; count: jest.Mock; aggregate: jest.Mock };
+    searchLogResult: {
+      aggregate: jest.Mock;
+      groupBy: jest.Mock;
+      findMany: jest.Mock;
+    };
+    aiMessage: { aggregate: jest.Mock };
   };
   let aiService: {
     summarizeTicketForKnowledgeArticle: jest.Mock;
@@ -69,6 +76,21 @@ describe('KnowledgeService', () => {
         delete: jest.fn(),
       },
       script: { findMany: jest.fn().mockResolvedValue([]) },
+      searchLog: {
+        create: jest.fn().mockResolvedValue({ id: 'search-log-1' }),
+        count: jest.fn().mockResolvedValue(0),
+        aggregate: jest.fn().mockResolvedValue({ _avg: { latencyMs: null } }),
+      },
+      searchLogResult: {
+        aggregate: jest.fn().mockResolvedValue({ _avg: { rank: null } }),
+        groupBy: jest.fn().mockResolvedValue([]),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      aiMessage: {
+        aggregate: jest
+          .fn()
+          .mockResolvedValue({ _sum: { tokenCost: null }, _count: 0 }),
+      },
     };
     aiService = {
       summarizeTicketForKnowledgeArticle: jest.fn(),
@@ -449,6 +471,155 @@ describe('KnowledgeService', () => {
 
         expect(result.contradictions).toEqual([]);
       });
+    });
+
+    // docs/10-architecture-rag.md §12 "Supervision et qualité".
+    describe('SearchLog', () => {
+      async function seedOneMatchingSource() {
+        const content = 'Imprimante réseau bloquée, redémarrage du spouleur';
+        prisma.documentChunk.findMany.mockResolvedValue([
+          {
+            id: 'chunk-match',
+            documentId: null,
+            ticketId: 'tkt-1',
+            knowledgeArticleId: null,
+            scriptId: null,
+            knowledgeLevel: 3,
+            ownerId: null,
+            content,
+            embedding: await embed(content),
+            embeddingProvider: 'HASHING',
+          },
+        ]);
+        prisma.ticket.findMany.mockResolvedValue([
+          {
+            id: 'tkt-1',
+            reference: 'TCK-0001',
+            title: 'Imprimante bloquée',
+            summary: null,
+            resolvedAt: new Date('2026-01-01'),
+            category: { name: 'Matériel' },
+            priority: { name: 'Moyenne' },
+          },
+        ]);
+      }
+
+      it('records a SearchLog with the requester, the result count/positions, and a non-negative latency', async () => {
+        await seedOneMatchingSource();
+
+        await service.search('imprimante réseau bloquée redémarrage spouleur', {
+          userId: 'tech-1',
+          role: Role.TECHNICIAN,
+        });
+
+        expect(prisma.searchLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              requesterId: 'tech-1',
+              query: 'imprimante réseau bloquée redémarrage spouleur',
+              resultCount: 1,
+              lowConfidence: false,
+              latencyMs: expect.any(Number),
+              results: {
+                create: [
+                  expect.objectContaining({
+                    originId: 'tkt-1',
+                    sourceType: 'TICKET',
+                    position: 0,
+                  }),
+                ],
+              },
+            }),
+          }),
+        );
+        const call = prisma.searchLog.create.mock.calls[0][0];
+        expect(call.data.latencyMs).toBeGreaterThanOrEqual(0);
+      });
+
+      it('still returns search results when recording the SearchLog fails (best-effort)', async () => {
+        await seedOneMatchingSource();
+        prisma.searchLog.create.mockRejectedValue(new Error('DB down'));
+
+        const result = await service.search(
+          'imprimante réseau bloquée redémarrage spouleur',
+          { userId: 'tech-1', role: Role.TECHNICIAN },
+        );
+
+        expect(result.results).toHaveLength(1);
+      });
+    });
+  });
+
+  // docs/10-architecture-rag.md §12 "Supervision et qualité".
+  describe('getQualityMetrics', () => {
+    it('computes every indicator from real aggregates, with no data faked when there is none yet', async () => {
+      prisma.searchLog.count
+        .mockResolvedValueOnce(10) // totalSearches
+        .mockResolvedValueOnce(3); // lowConfidenceCount
+      prisma.searchLog.aggregate.mockResolvedValue({
+        _avg: { latencyMs: 42.5 },
+      });
+      prisma.searchLogResult.aggregate.mockResolvedValue({
+        _avg: { rank: 0.61 },
+      });
+      prisma.aiMessage.aggregate.mockResolvedValue({
+        _sum: { tokenCost: { toNumber: () => 1.23 } },
+        _count: 7,
+      });
+      prisma.searchLogResult.groupBy.mockResolvedValue([
+        {
+          originId: 'doc-1',
+          sourceType: 'DOCUMENT',
+          title: 'Procédure X',
+          _count: { originId: 5 },
+        },
+      ]);
+      prisma.searchLogResult.findMany.mockResolvedValue([
+        { originId: 'doc-1' },
+      ]);
+      const staleDoc = {
+        id: 'doc-2',
+        title: 'Vieille procédure jamais trouvée',
+        knowledgeLevel: 2,
+        createdAt: new Date('2020-01-01'),
+      };
+      prisma.knowledgeDocument.findMany.mockResolvedValue([staleDoc]);
+
+      const result = await service.getQualityMetrics();
+
+      expect(result.totalSearches).toBe(10);
+      expect(result.relevantResponseRate).toBeCloseTo(0.7); // (10-3)/10
+      expect(result.avgLatencyMs).toBe(42.5);
+      expect(result.avgConfidence).toBe(0.61);
+      expect(result.aiCost).toEqual({ totalTokenCost: 1.23, callCount: 7 });
+      expect(result.topDocuments).toEqual([
+        {
+          originId: 'doc-1',
+          sourceType: 'DOCUMENT',
+          title: 'Procédure X',
+          timesReturned: 5,
+        },
+      ]);
+      expect(result.staleDocuments).toEqual([staleDoc]);
+      // doc-1 est apparu au moins une fois : jamais listé comme obsolète,
+      // quel que soit son âge.
+      expect(prisma.knowledgeDocument.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { notIn: ['doc-1'] },
+          }),
+        }),
+      );
+    });
+
+    it('returns null rates rather than dividing by zero when there is no search history yet', async () => {
+      const result = await service.getQualityMetrics();
+
+      expect(result.totalSearches).toBe(0);
+      expect(result.relevantResponseRate).toBeNull();
+      expect(result.avgLatencyMs).toBeNull();
+      expect(result.avgConfidence).toBeNull();
+      expect(result.aiCost).toEqual({ totalTokenCost: 0, callCount: 0 });
     });
   });
 

@@ -48,6 +48,7 @@ model User {
   knowledgeDocumentsUploaded KnowledgeDocument[] @relation("KnowledgeDocumentUploader")
   autoResolutionsRequested  AutoResolution[]
   specialties               TechnicianSpecialty[]
+  searchLogs                SearchLog[]
 
   @@map("users")
 }
@@ -761,6 +762,55 @@ model DocumentChunk {
   @@index([knowledgeLevel])
   @@index([ownerId])
   @@map("document_chunks")
+}
+
+// docs/10-architecture-rag.md §12 "Supervision et qualité" : trace chaque
+// recherche pour calculer les indicateurs de qualité a posteriori (temps de
+// recherche, score moyen de confiance, taux de réutilisation des documents,
+// documents les plus consultés/obsolètes — voir
+// KnowledgeService.getQualityMetrics) plutôt que de les estimer sans
+// données réelles. Ecriture best-effort (voir KnowledgeService.search) :
+// un échec ne doit jamais faire échouer la recherche elle-même.
+model SearchLog {
+  id            String   @id @default(uuid())
+  requesterId   String   @map("requester_id")
+  // onDelete: Cascade — ce sont des donnees d'analytics, pas une relation
+  // metier a preserver : sans ca, supprimer un utilisateur (ex. cleanup de
+  // fixtures e2e) echoue des qu'il a effectue au moins une recherche,
+  // laissant l'app de test ouverte avec ses cron jobs actifs (meme piege
+  // deja rencontre avec le fichier de smoke-test live, voir jest-e2e.json).
+  requester     User     @relation(fields: [requesterId], references: [id], onDelete: Cascade)
+  query         String
+  latencyMs     Int      @map("latency_ms")
+  resultCount   Int      @map("result_count")
+  lowConfidence Boolean  @map("low_confidence")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  results SearchLogResult[]
+
+  @@index([createdAt])
+  @@map("search_logs")
+}
+
+// originId/sourceType denormalises (pas de FK typee) : une meme recherche
+// peut renvoyer des origines de 4 tables differentes (ticket/article/
+// script/document, doc §13 RAG multi-niveaux) — Prisma ne modelise pas de
+// relation polymorphe, et titre/rank sont deja denormalises ici pour que
+// les agregations de KnowledgeService.getQualityMetrics n'aient besoin
+// d'aucune jointure vers les tables d'origine (qui peuvent avoir ete
+// supprimees depuis).
+model SearchLogResult {
+  id          String    @id @default(uuid())
+  searchLogId String    @map("search_log_id")
+  searchLog   SearchLog @relation(fields: [searchLogId], references: [id], onDelete: Cascade)
+  originId    String    @map("origin_id")
+  sourceType  String    @map("source_type")
+  title       String
+  rank        Float
+  position    Int
+
+  @@index([originId])
+  @@map("search_log_results")
 }
 
 enum EmbeddingProvider {

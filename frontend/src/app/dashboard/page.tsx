@@ -16,9 +16,11 @@ import {
   exportDashboardReport,
   getDashboardStats,
   getModelReliability,
+  getRagQualityMetrics,
   type DashboardExportFormat,
   type DashboardStats,
   type ModelReliabilityEntry,
+  type RagQualityMetrics,
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
@@ -57,6 +59,20 @@ function formatPercentage(rate: number | null): string {
   return `${rate.toFixed(1)} %`;
 }
 
+// getRagQualityMetrics renvoie un ratio 0-1 (relevantResponseRate,
+// contrairement à DashboardStats qui renvoie déjà un pourcentage 0-100.
+function formatRatio(ratio: number | null): string {
+  if (ratio === null) return "—";
+  return `${(ratio * 100).toFixed(1)} %`;
+}
+
+function formatLatency(ms: number | null): string {
+  if (ms === null) return "—";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+const dateTimeFormatter = new Intl.DateTimeFormat("fr-CA", { dateStyle: "medium" });
+
 export default function DashboardPage() {
   const router = useRouter();
   const user = useSessionUser();
@@ -68,6 +84,8 @@ export default function DashboardPage() {
   const [exportingFormat, setExportingFormat] = useState<DashboardExportFormat | null>(null);
   const [modelReliability, setModelReliability] = useState<ModelReliabilityEntry[] | null>(null);
   const [modelReliabilityError, setModelReliabilityError] = useState<string | null>(null);
+  const [ragMetrics, setRagMetrics] = useState<RagQualityMetrics | null>(null);
+  const [ragMetricsError, setRagMetricsError] = useState<string | null>(null);
 
   useEffect(() => {
     const token = getToken();
@@ -104,6 +122,22 @@ export default function DashboardPage() {
       })
       .catch(() => {
         setModelReliabilityError("Impossible de charger la fiabilité par modèle pour le moment.");
+      });
+  }, [user]);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token || (user && !DASHBOARD_ROLES.has(user.role)) || !user) return;
+
+    getRagQualityMetrics(token)
+      .then((data) => {
+        setRagMetrics(data);
+        setRagMetricsError(null);
+      })
+      .catch(() => {
+        setRagMetricsError(
+          "Impossible de charger les indicateurs qualité de la recherche pour le moment.",
+        );
       });
   }, [user]);
 
@@ -410,6 +444,140 @@ export default function DashboardPage() {
                         ))}
                       </TableBody>
                     </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Qualité de la recherche RAG</CardTitle>
+                <CardDescription>
+                  docs/10-architecture-rag.md §12 : indicateurs calculés à partir des recherches
+                  réellement effectuées (aucune valeur estimée).
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {ragMetricsError ? (
+                  <Alert variant="destructive">
+                    <AlertDescription>{ragMetricsError}</AlertDescription>
+                  </Alert>
+                ) : ragMetrics === null ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">Chargement...</p>
+                ) : ragMetrics.totalSearches === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    Aucune recherche effectuée pour le moment.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-6">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                      <Card>
+                        <CardHeader>
+                          <CardDescription>Recherches effectuées</CardDescription>
+                          <CardTitle className="text-3xl">{ragMetrics.totalSearches}</CardTitle>
+                        </CardHeader>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardDescription>Temps moyen de recherche</CardDescription>
+                          <CardTitle className="text-3xl">
+                            {formatLatency(ragMetrics.avgLatencyMs)}
+                          </CardTitle>
+                        </CardHeader>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardDescription>Score moyen de confiance</CardDescription>
+                          <CardTitle className="text-3xl">
+                            {formatRatio(ragMetrics.avgConfidence)}
+                          </CardTitle>
+                        </CardHeader>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardDescription>Réponses pertinentes</CardDescription>
+                          <CardTitle className="text-3xl">
+                            {formatRatio(ragMetrics.relevantResponseRate)}
+                          </CardTitle>
+                        </CardHeader>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardDescription>Coût des appels IA</CardDescription>
+                          <CardTitle className="text-3xl">
+                            {ragMetrics.aiCost.totalTokenCost.toFixed(2)} $
+                          </CardTitle>
+                        </CardHeader>
+                      </Card>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                      <div>
+                        <h3 className="mb-2 text-sm font-medium">
+                          Documents les plus consultés
+                        </h3>
+                        {ragMetrics.topDocuments.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            Aucune source renvoyée pour le moment.
+                          </p>
+                        ) : (
+                          <div className="overflow-hidden rounded-md border border-border">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Titre</TableHead>
+                                  <TableHead>Type</TableHead>
+                                  <TableHead>Fois renvoyé</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {ragMetrics.topDocuments.map((doc) => (
+                                  <TableRow key={doc.originId}>
+                                    <TableCell className="font-medium">{doc.title}</TableCell>
+                                    <TableCell>{doc.sourceType}</TableCell>
+                                    <TableCell>{doc.timesReturned}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <h3 className="mb-2 text-sm font-medium">
+                          Documents obsolètes (jamais renvoyés par une recherche)
+                        </h3>
+                        {ragMetrics.staleDocuments.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">
+                            Aucun document obsolète détecté.
+                          </p>
+                        ) : (
+                          <div className="overflow-hidden rounded-md border border-border">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Titre</TableHead>
+                                  <TableHead>Niveau</TableHead>
+                                  <TableHead>Ajouté le</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {ragMetrics.staleDocuments.map((doc) => (
+                                  <TableRow key={doc.id}>
+                                    <TableCell className="font-medium">{doc.title}</TableCell>
+                                    <TableCell>{doc.knowledgeLevel}</TableCell>
+                                    <TableCell>
+                                      {dateTimeFormatter.format(new Date(doc.createdAt))}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
               </CardContent>
