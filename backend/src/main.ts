@@ -8,6 +8,10 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  // eslint-disable-next-line no-console -- diagnostic de demarrage, avant
+  // que app.useLogger() ne branche Pino : visible meme si le bootstrap
+  // plante avant ce point (bufferLogs retiendrait sinon tout log Nest).
+  console.log('[bootstrap] Starting Nest application...');
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
   // CSP par defaut de Helmet cassee le Swagger UI (scripts/styles inline) :
@@ -43,6 +47,17 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
-  await app.listen(process.env.PORT ?? 3000);
+  const port = process.env.PORT ?? 3000;
+  // eslint-disable-next-line no-console -- voir commentaire plus haut
+  console.log(`[bootstrap] Calling app.listen(${port}, '0.0.0.0')...`);
+  await app.listen(port, '0.0.0.0');
+  // eslint-disable-next-line no-console -- voir commentaire plus haut
+  console.log(`[bootstrap] Listening on 0.0.0.0:${port}`);
 }
-bootstrap();
+bootstrap().catch((error: unknown) => {
+  // eslint-disable-next-line no-console -- sans ce catch, une exception ici
+  // etait avalee silencieusement (promesse non geree), invisible dans les
+  // logs Render (cause du "silence" observe avant "No open ports detected").
+  console.error('[bootstrap] Fatal error during startup:', error);
+  process.exit(1);
+});
