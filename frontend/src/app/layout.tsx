@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { SessionBootstrap } from "@/components/session-bootstrap";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const plexSans = IBM_Plex_Sans({
@@ -32,6 +33,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <SessionBootstrap>{children}</SessionBootstrap>
+        <Toaster />
       </body>
     </html>
   );

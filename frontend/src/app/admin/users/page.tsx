@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   ApiError,
   createUser,
@@ -75,6 +76,7 @@ export default function AdminUsersPage() {
   const [teamId, setTeamId] = useState(NO_TEAM);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const loadUsers = useCallback(
     (token: string) => {
@@ -147,6 +149,8 @@ export default function AdminUsersPage() {
       setRole("EMPLOYEE");
       setDepartmentId(NO_DEPARTMENT);
       setTeamId(NO_TEAM);
+      toast.success("Utilisateur créé avec succès");
+      nameInputRef.current?.focus();
       await loadUsers(token);
     } catch (err) {
       setCreateError(
@@ -305,6 +309,7 @@ export default function AdminUsersPage() {
                   <Label htmlFor="new-user-name">Nom</Label>
                   <Input
                     id="new-user-name"
+                    ref={nameInputRef}
                     required
                     value={displayName}
                     onChange={(event) => setDisplayName(event.target.value)}
