@@ -12,6 +12,22 @@ import {
   YAxis,
 } from "recharts";
 import {
+  ShieldCheck,
+  Ticket,
+  CheckCircle2,
+  Timer,
+  Wand2,
+  FileSpreadsheet,
+  FileText,
+  BarChart3,
+  Users,
+  Boxes,
+  Search,
+  Gauge,
+  type LucideIcon,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
   ApiError,
   exportDashboardReport,
   getDashboardStats,
@@ -25,8 +41,17 @@ import {
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
+import { DateField } from "@/components/date-field";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -37,7 +62,6 @@ import {
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 function formatTrend(entry: ModelReliabilityEntry): string {
@@ -72,6 +96,42 @@ function formatLatency(ms: number | null): string {
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat("fr-CA", { dateStyle: "medium" });
+
+type KpiTone = "primary" | "amber" | "moss" | "slate" | "terracotta";
+
+const KPI_TONE_CLASSES: Record<KpiTone, string> = {
+  primary: "bg-primary/10 text-primary",
+  amber: "bg-signal-amber/15 text-signal-amber",
+  moss: "bg-signal-moss/15 text-signal-moss",
+  slate: "bg-signal-slate/15 text-signal-slate",
+  terracotta: "bg-signal-rust/15 text-signal-rust",
+};
+
+function KpiCard({
+  icon: Icon,
+  tone,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  tone: KpiTone;
+  label: string;
+  value: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardDescription>{label}</CardDescription>
+        <CardTitle className="text-3xl">{value}</CardTitle>
+        <CardAction>
+          <div className={cn("flex size-9 items-center justify-center rounded-full", KPI_TONE_CLASSES[tone])}>
+            <Icon className="size-4.5" aria-hidden="true" />
+          </div>
+        </CardAction>
+      </CardHeader>
+    </Card>
+  );
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -199,25 +259,11 @@ export default function DashboardPage() {
         <div className="mb-6 flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="dashboard-from-date">Du</Label>
-            <Input
-              id="dashboard-from-date"
-              type="date"
-              value={fromDate}
-              max={toDate || undefined}
-              onChange={(event) => setFromDate(event.target.value)}
-              className="w-40"
-            />
+            <DateField id="dashboard-from-date" value={fromDate} max={toDate} onChange={setFromDate} />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="dashboard-to-date">Au</Label>
-            <Input
-              id="dashboard-to-date"
-              type="date"
-              value={toDate}
-              min={fromDate || undefined}
-              onChange={(event) => setToDate(event.target.value)}
-              className="w-40"
-            />
+            <DateField id="dashboard-to-date" value={toDate} min={fromDate} onChange={setToDate} />
           </div>
           {fromDate || toDate ? (
             <Button variant="ghost" size="sm" onClick={resetDateFilter}>
@@ -233,6 +279,7 @@ export default function DashboardPage() {
                 onClick={() => handleExport("csv")}
                 disabled={exportingFormat !== null}
               >
+                <FileSpreadsheet />
                 {exportingFormat === "csv" ? "Export..." : "Exporter en CSV"}
               </Button>
               <Button
@@ -241,6 +288,7 @@ export default function DashboardPage() {
                 onClick={() => handleExport("pdf")}
                 disabled={exportingFormat !== null}
               >
+                <FileText />
                 {exportingFormat === "pdf" ? "Export..." : "Exporter en PDF"}
               </Button>
             </div>
@@ -262,42 +310,36 @@ export default function DashboardPage() {
         ) : (
           <div className="flex flex-col gap-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              <Card>
-                <CardHeader>
-                  <CardDescription>SLA respecté</CardDescription>
-                  <CardTitle className="text-3xl">
-                    {formatPercentage(stats.slaComplianceRate)}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardDescription>Tickets ouverts</CardDescription>
-                  <CardTitle className="text-3xl">{stats.totalOpen}</CardTitle>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardDescription>Tickets résolus</CardDescription>
-                  <CardTitle className="text-3xl">{stats.totalResolved}</CardTitle>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardDescription>Temps moyen de résolution</CardDescription>
-                  <CardTitle className="text-3xl">
-                    {formatResolutionTime(stats.averageResolutionHours)}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardDescription>Correction manuelle IA</CardDescription>
-                  <CardTitle className="text-3xl">
-                    {formatPercentage(stats.aiCorrectionRate)}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
+              <KpiCard
+                icon={ShieldCheck}
+                tone="primary"
+                label="SLA respecté"
+                value={formatPercentage(stats.slaComplianceRate)}
+              />
+              <KpiCard
+                icon={Ticket}
+                tone="amber"
+                label="Tickets ouverts"
+                value={String(stats.totalOpen)}
+              />
+              <KpiCard
+                icon={CheckCircle2}
+                tone="moss"
+                label="Tickets résolus"
+                value={String(stats.totalResolved)}
+              />
+              <KpiCard
+                icon={Timer}
+                tone="slate"
+                label="Temps moyen de résolution"
+                value={formatResolutionTime(stats.averageResolutionHours)}
+              />
+              <KpiCard
+                icon={Wand2}
+                tone="terracotta"
+                label="Correction manuelle IA"
+                value={formatPercentage(stats.aiCorrectionRate)}
+              />
             </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -308,9 +350,7 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   {stats.byCategory.length === 0 ? (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      Aucun ticket pour le moment.
-                    </p>
+                    <EmptyState icon={BarChart3} message="Aucun ticket pour le moment." />
                   ) : (
                     <ResponsiveContainer width="100%" height={260}>
                       <BarChart data={stats.byCategory}>
@@ -351,9 +391,7 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   {stats.byTechnician.length === 0 ? (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      Aucun ticket assigné pour le moment.
-                    </p>
+                    <EmptyState icon={Users} message="Aucun ticket assigné pour le moment." />
                   ) : (
                     <ResponsiveContainer width="100%" height={Math.max(260, stats.byTechnician.length * 40)}>
                       <BarChart data={stats.byTechnician} layout="vertical">
@@ -407,9 +445,10 @@ export default function DashboardPage() {
                 ) : modelReliability === null ? (
                   <p className="py-8 text-center text-sm text-muted-foreground">Chargement...</p>
                 ) : modelReliability.length === 0 ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">
-                    Aucun équipement avec un fabricant/modèle renseigné pour le moment.
-                  </p>
+                  <EmptyState
+                    icon={Boxes}
+                    message="Aucun équipement avec un fabricant/modèle renseigné pour le moment."
+                  />
                 ) : (
                   <div className="overflow-hidden rounded-md border border-border">
                     <Table>
@@ -465,50 +504,40 @@ export default function DashboardPage() {
                 ) : ragMetrics === null ? (
                   <p className="py-8 text-center text-sm text-muted-foreground">Chargement...</p>
                 ) : ragMetrics.totalSearches === 0 ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">
-                    Aucune recherche effectuée pour le moment.
-                  </p>
+                  <EmptyState icon={Search} message="Aucune recherche effectuée pour le moment." />
                 ) : (
                   <div className="flex flex-col gap-6">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                      <Card>
-                        <CardHeader>
-                          <CardDescription>Recherches effectuées</CardDescription>
-                          <CardTitle className="text-3xl">{ragMetrics.totalSearches}</CardTitle>
-                        </CardHeader>
-                      </Card>
-                      <Card>
-                        <CardHeader>
-                          <CardDescription>Temps moyen de recherche</CardDescription>
-                          <CardTitle className="text-3xl">
-                            {formatLatency(ragMetrics.avgLatencyMs)}
-                          </CardTitle>
-                        </CardHeader>
-                      </Card>
-                      <Card>
-                        <CardHeader>
-                          <CardDescription>Score moyen de confiance</CardDescription>
-                          <CardTitle className="text-3xl">
-                            {formatRatio(ragMetrics.avgConfidence)}
-                          </CardTitle>
-                        </CardHeader>
-                      </Card>
-                      <Card>
-                        <CardHeader>
-                          <CardDescription>Réponses pertinentes</CardDescription>
-                          <CardTitle className="text-3xl">
-                            {formatRatio(ragMetrics.relevantResponseRate)}
-                          </CardTitle>
-                        </CardHeader>
-                      </Card>
-                      <Card>
-                        <CardHeader>
-                          <CardDescription>Coût des appels IA</CardDescription>
-                          <CardTitle className="text-3xl">
-                            {ragMetrics.aiCost.totalTokenCost.toFixed(2)} $
-                          </CardTitle>
-                        </CardHeader>
-                      </Card>
+                      <KpiCard
+                        icon={Search}
+                        tone="primary"
+                        label="Recherches effectuées"
+                        value={String(ragMetrics.totalSearches)}
+                      />
+                      <KpiCard
+                        icon={Timer}
+                        tone="slate"
+                        label="Temps moyen de recherche"
+                        value={formatLatency(ragMetrics.avgLatencyMs)}
+                      />
+                      <KpiCard
+                        icon={Gauge}
+                        tone="amber"
+                        label="Score moyen de confiance"
+                        value={formatRatio(ragMetrics.avgConfidence)}
+                      />
+                      <KpiCard
+                        icon={CheckCircle2}
+                        tone="moss"
+                        label="Réponses pertinentes"
+                        value={formatRatio(ragMetrics.relevantResponseRate)}
+                      />
+                      <KpiCard
+                        icon={Wand2}
+                        tone="terracotta"
+                        label="Coût des appels IA"
+                        value={`${ragMetrics.aiCost.totalTokenCost.toFixed(2)} $`}
+                      />
                     </div>
 
                     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -517,9 +546,7 @@ export default function DashboardPage() {
                           Documents les plus consultés
                         </h3>
                         {ragMetrics.topDocuments.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">
-                            Aucune source renvoyée pour le moment.
-                          </p>
+                          <EmptyState message="Aucune source renvoyée pour le moment." className="py-6" />
                         ) : (
                           <div className="overflow-hidden rounded-md border border-border">
                             <Table>
@@ -549,9 +576,7 @@ export default function DashboardPage() {
                           Documents obsolètes (jamais renvoyés par une recherche)
                         </h3>
                         {ragMetrics.staleDocuments.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">
-                            Aucun document obsolète détecté.
-                          </p>
+                          <EmptyState icon={CheckCircle2} message="Aucun document obsolète détecté." className="py-6" />
                         ) : (
                           <div className="overflow-hidden rounded-md border border-border">
                             <Table>

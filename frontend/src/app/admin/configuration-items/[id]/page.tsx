@@ -23,7 +23,9 @@ import { Label } from "@/components/ui/label";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { STATUS_DISPLAY } from "@/lib/ticket-display";
+import { KeyRound, Link2 } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -704,7 +706,7 @@ export default function AdminConfigurationItemDetailPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Aucune licence enregistrée.</p>
+                    <EmptyState icon={KeyRound} message="Aucune licence enregistrée." className="items-start py-3 text-left" />
                     {isPrivileged ? (
                       <Button variant="outline" size="sm" onClick={startEditingLicense}>
                         Ajouter une licence
@@ -733,7 +735,7 @@ export default function AdminConfigurationItemDetailPage() {
                 <div>
                   <p className="mb-2 text-sm font-medium">Dépend de</p>
                   {ci.relationshipsAsChild.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Aucune dépendance renseignée.</p>
+                    <EmptyState icon={Link2} message="Aucune dépendance renseignée." className="items-start py-3 text-left" />
                   ) : (
                     <ul className="space-y-1">
                       {ci.relationshipsAsChild.map((rel) => (

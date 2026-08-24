@@ -15,7 +15,9 @@ import {
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { Boxes } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -289,7 +291,7 @@ export default function AdminConfigurationItemsPage() {
               ) : items === null ? (
                 <p className="text-sm text-muted-foreground">Chargement de l&apos;inventaire...</p>
               ) : items.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Aucun Configuration Item pour le moment.</p>
+                <EmptyState icon={Boxes} message="Aucun Configuration Item pour le moment." />
               ) : (
                 <div className="overflow-hidden rounded-md border border-border">
                   <Table>

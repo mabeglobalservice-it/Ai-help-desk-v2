@@ -11,7 +11,9 @@ import {
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { Terminal } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -214,7 +216,7 @@ export default function AdminAutomationScriptsPage() {
               ) : scripts === null ? (
                 <p className="text-sm text-muted-foreground">Chargement des scripts...</p>
               ) : scripts.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Aucun script pour le moment.</p>
+                <EmptyState icon={Terminal} message="Aucun script pour le moment." />
               ) : (
                 <div className="overflow-hidden rounded-md border border-border">
                   <Table>

@@ -10,7 +10,9 @@ import {
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { FileText } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -123,7 +125,7 @@ export default function KnowledgeArticlesPage() {
             ) : articles === null ? (
               <p className="text-sm text-muted-foreground">Chargement des articles...</p>
             ) : articles.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucun article en attente d&apos;approbation.</p>
+              <EmptyState icon={FileText} message="Aucun article en attente d&apos;approbation." />
             ) : (
               <ul className="flex flex-col gap-4">
                 {articles.map((article) => (

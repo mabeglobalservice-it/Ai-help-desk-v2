@@ -3,7 +3,7 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Star } from "lucide-react";
+import { Star, Terminal, MessageSquare, Paperclip, History } from "lucide-react";
 import {
   ApiError,
   ATTACHMENT_ACCEPT,
@@ -40,6 +40,7 @@ import { useRealtimeEvent } from "@/lib/use-realtime-event";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
 import { formatFileSize } from "@/lib/format";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { SlaBadge } from "@/components/sla-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -977,7 +978,7 @@ export default function TicketDetailPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {scripts.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Aucun script disponible pour le moment.</p>
+                    <EmptyState icon={Terminal} message="Aucun script disponible pour le moment." className="py-4" />
                   ) : (
                     <form onSubmit={handleRequestAutomation} className="space-y-3">
                       <Button
@@ -1125,7 +1126,7 @@ export default function TicketDetailPage() {
                 {comments === null ? (
                   <p className="text-sm text-muted-foreground">Chargement des commentaires...</p>
                 ) : comments.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucun commentaire pour le moment.</p>
+                  <EmptyState icon={MessageSquare} message="Aucun commentaire pour le moment." className="py-4" />
                 ) : (
                   <ul className="space-y-4">
                     {comments.map((comment) => (
@@ -1179,7 +1180,7 @@ export default function TicketDetailPage() {
                 {attachments === null ? (
                   <p className="text-sm text-muted-foreground">Chargement des pièces jointes...</p>
                 ) : attachments.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucune pièce jointe pour le moment.</p>
+                  <EmptyState icon={Paperclip} message="Aucune pièce jointe pour le moment." className="py-4" />
                 ) : (
                   <ul className="space-y-3">
                     {attachments.map((attachment) => (
@@ -1240,7 +1241,7 @@ export default function TicketDetailPage() {
               </CardHeader>
               <CardContent>
                 {ticket.statusHistory.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Aucun changement de statut enregistré.</p>
+                  <EmptyState icon={History} message="Aucun changement de statut enregistré." className="py-4" />
                 ) : (
                   <ul className="space-y-3">
                     {ticket.statusHistory.map((entry) => (

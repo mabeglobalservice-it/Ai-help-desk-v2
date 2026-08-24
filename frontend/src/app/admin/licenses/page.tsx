@@ -6,7 +6,9 @@ import { useRouter } from "next/navigation";
 import { ApiError, getLicenses, type LicenseListEntry, type LicenseStatus } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { KeyRound } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
@@ -104,7 +106,7 @@ export default function AdminLicensesPage() {
             ) : entries === null ? (
               <p className="text-sm text-muted-foreground">Chargement...</p>
             ) : entries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune licence enregistrée pour le moment.</p>
+              <EmptyState icon={KeyRound} message="Aucune licence enregistrée pour le moment." />
             ) : (
               <div className="overflow-hidden rounded-md border border-border">
                 <Table>

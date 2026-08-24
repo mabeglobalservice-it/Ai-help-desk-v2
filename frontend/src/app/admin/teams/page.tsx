@@ -13,7 +13,9 @@ import {
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { Users } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -232,7 +234,7 @@ export default function AdminTeamsPage() {
               ) : teams === null ? (
                 <p className="text-sm text-muted-foreground">Chargement des équipes...</p>
               ) : teams.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Aucune équipe pour le moment.</p>
+                <EmptyState icon={Users} message="Aucune équipe pour le moment." />
               ) : (
                 <div className="overflow-hidden rounded-md border border-border">
                   <Table>

@@ -17,6 +17,7 @@ import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { useRealtimeEvent } from "@/lib/use-realtime-event";
 import { STATUS_DISPLAY, priorityDotClass } from "@/lib/ticket-display";
+import { Inbox, SearchX } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
 import { SlaBadge } from "@/components/sla-badge";
 import { Button } from "@/components/ui/button";
@@ -216,7 +217,14 @@ export default function TicketsPage() {
         ) : tickets === null ? (
           <p className="text-sm text-muted-foreground">Chargement des tickets...</p>
         ) : tickets.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border py-16 text-center">
+          <div className="flex flex-col items-center rounded-md border border-dashed border-border py-16 text-center">
+            <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              {hasActiveFilter ? (
+                <SearchX className="size-5" aria-hidden="true" />
+              ) : (
+                <Inbox className="size-5" aria-hidden="true" />
+              )}
+            </div>
             <p className="font-medium">
               {hasActiveFilter ? "Aucun ticket ne correspond à ces filtres." : "Aucun ticket pour le moment."}
             </p>

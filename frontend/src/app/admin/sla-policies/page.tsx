@@ -10,7 +10,9 @@ import {
 } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { Gauge } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -142,7 +144,7 @@ export default function AdminSlaPoliciesPage() {
             ) : policies === null ? (
               <p className="text-sm text-muted-foreground">Chargement des politiques SLA...</p>
             ) : policies.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune politique SLA configurée.</p>
+              <EmptyState icon={Gauge} message="Aucune politique SLA configurée." />
             ) : (
               <div className="overflow-hidden rounded-md border border-border">
                 <Table>

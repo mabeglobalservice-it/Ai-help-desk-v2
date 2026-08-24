@@ -9,7 +9,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-plex-sans);
   --font-mono: var(--font-plex-mono);
-  --font-heading: var(--font-plex-sans);
+  --font-heading: var(--font-source-serif);
   --color-ink: var(--ink);
   --color-ink-foreground: var(--ink-foreground);
   --color-ink-line: var(--ink-line);
@@ -56,47 +56,48 @@
 }
 
 :root {
-  --background: #f6f5f1;
-  --foreground: #1b1f27;
+  /* docs/12-maquettes-ui-ux.md §2, theme clair "Institutionnel" */
+  --background: #f7f3ec;
+  --foreground: #1e2430;
   --card: #ffffff;
-  --card-foreground: #1b1f27;
+  --card-foreground: #1e2430;
   --popover: #ffffff;
-  --popover-foreground: #1b1f27;
-  --primary: #3b5fe0;
-  --primary-foreground: #f6f5f1;
-  --secondary: #eae8e1;
-  --secondary-foreground: #1b1f27;
-  --muted: #eae8e1;
-  --muted-foreground: #667085;
-  --accent: #e3e7fb;
-  --accent-foreground: #1e2a5e;
+  --popover-foreground: #1e2430;
+  --primary: #1e3a5f;
+  --primary-foreground: #f7f3ec;
+  --secondary: #ede5d8;
+  --secondary-foreground: #1e3a5f;
+  --muted: #ede5d8;
+  --muted-foreground: #6b6154;
+  --accent: #e5ecf3;
+  --accent-foreground: #1e3a5f;
   --destructive: #b3402f;
-  --border: #ddd9d0;
-  --input: #ddd9d0;
-  --ring: #3b5fe0;
-  --chart-1: #3b5fe0;
-  --chart-2: #2f8f63;
-  --chart-3: #c98a1e;
-  --chart-4: #b3402f;
-  --chart-5: #667085;
+  --border: #e2d9c9;
+  --input: #e2d9c9;
+  --ring: #1e3a5f;
+  --chart-1: #1e3a5f;
+  --chart-2: #4c8c6b;
+  --chart-3: #d19a3d;
+  --chart-4: #c4694a;
+  --chart-5: #6b6154;
   --radius: 0.4rem;
-  --sidebar: #f6f5f1;
-  --sidebar-foreground: #1b1f27;
-  --sidebar-primary: #3b5fe0;
-  --sidebar-primary-foreground: #f6f5f1;
-  --sidebar-accent: #eae8e1;
-  --sidebar-accent-foreground: #1b1f27;
-  --sidebar-border: #ddd9d0;
-  --sidebar-ring: #3b5fe0;
+  --sidebar: #f7f3ec;
+  --sidebar-foreground: #1e2430;
+  --sidebar-primary: #1e3a5f;
+  --sidebar-primary-foreground: #f7f3ec;
+  --sidebar-accent: #ede5d8;
+  --sidebar-accent-foreground: #1e2430;
+  --sidebar-border: #e2d9c9;
+  --sidebar-ring: #1e3a5f;
 
   /* Signal system: shared across the ink login panel and ticket status/priority marks */
-  --ink: #14171c;
-  --ink-foreground: #e7e5df;
-  --ink-line: #262b33;
-  --signal-moss: #2f8f63;
-  --signal-amber: #c98a1e;
-  --signal-rust: #b3402f;
-  --signal-slate: #667085;
+  --ink: #16273f;
+  --ink-foreground: #f7f3ec;
+  --ink-line: #24405f;
+  --signal-moss: #4c8c6b;
+  --signal-amber: #d19a3d;
+  --signal-rust: #c4694a;
+  --signal-slate: #6b6154;
 }
 
 .dark {

@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { ApiError, getAuditLogs, type AuditLogEntry } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
+import { History } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -186,7 +188,7 @@ export default function AdminAuditLogsPage() {
             ) : entries === null ? (
               <p className="text-sm text-muted-foreground">Chargement du journal...</p>
             ) : entries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune entrée pour le moment.</p>
+              <EmptyState icon={History} message="Aucune entrée pour le moment." />
             ) : (
               <div className="overflow-hidden rounded-md border border-border">
                 <Table>

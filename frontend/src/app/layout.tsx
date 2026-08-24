@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans, Source_Serif_4 } from "next/font/google";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
@@ -16,6 +16,16 @@ const plexMono = IBM_Plex_Mono({
   weight: ["400", "500", "600"],
 });
 
+// docs/12-maquettes-ui-ux.md §2 : "Typographie titres : police serif (ex.
+// Georgia / Iowan Old Style)" — identite editoriale distincte d'un SaaS
+// generique. Source Serif 4 est l'equivalent Google Fonts le plus proche
+// de cette reference (transitionnelle, chaleureuse, tres lisible en titre).
+const sourceSerif = Source_Serif_4({
+  variable: "--font-source-serif",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+});
+
 export const metadata: Metadata = {
   title: "AI Help Desk",
   description: "Console de support IT assisté par IA",
@@ -29,7 +39,7 @@ export default function RootLayout({
   return (
     <html
       lang="fr"
-      className={`${plexSans.variable} ${plexMono.variable} h-full antialiased`}
+      className={`${plexSans.variable} ${plexMono.variable} ${sourceSerif.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <SessionBootstrap>{children}</SessionBootstrap>

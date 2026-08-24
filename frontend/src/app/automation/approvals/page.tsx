@@ -11,7 +11,9 @@ import {
 import { clearSession, getToken } from "@/lib/session";
 import { useSessionUser } from "@/lib/use-session-user";
 import { useRealtimeEvent } from "@/lib/use-realtime-event";
+import { ClipboardCheck } from "lucide-react";
 import { AppHeader } from "@/components/app-header";
+import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -158,7 +160,7 @@ export default function AutomationApprovalsPage() {
             ) : approvals === null ? (
               <p className="text-sm text-muted-foreground">Chargement des approbations...</p>
             ) : approvals.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune action en attente d&apos;approbation.</p>
+              <EmptyState icon={ClipboardCheck} message="Aucune action en attente d&apos;approbation." />
             ) : (
               <ul className="flex flex-col gap-4">
                 {approvals.map((approval) => {
