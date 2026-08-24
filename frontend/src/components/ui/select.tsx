@@ -63,7 +63,16 @@ function SelectContent({
   sideOffset = 4,
   align = "center",
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  // Le comportement par defaut de base-ui (true) repositionne le popup
+  // pour aligner l'item deja selectionne sur le trigger — observe en
+  // pratique comme une course intermittente : le premier clic sur un
+  // autre item, juste apres l'ouverture, est parfois perdu (le popup
+  // achevant encore ce repositionnement), reproduit sur /admin/teams et
+  // /admin/users ou la valeur courante correspond deja a un item reel.
+  // Desactive par defaut pour un positionnement simple et previsible
+  // (ouverture sous le trigger), au prix de l'alignement "style select
+  // natif" purement cosmetique.
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<
