@@ -17,6 +17,8 @@
   --color-signal-amber: var(--signal-amber);
   --color-signal-rust: var(--signal-rust);
   --color-signal-slate: var(--signal-slate);
+  --color-terracotta: var(--terracotta);
+  --color-electric: var(--electric);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -71,15 +73,15 @@
   --muted-foreground: #6b6154;
   --accent: #e5ecf3;
   --accent-foreground: #1e3a5f;
-  --destructive: #b3402f;
+  --destructive: #ff5a5f;
   --border: #e2d9c9;
   --input: #e2d9c9;
-  --ring: #1e3a5f;
+  --ring: #3b82f6;
   --chart-1: #1e3a5f;
-  --chart-2: #4c8c6b;
+  --chart-2: #10b981;
   --chart-3: #d19a3d;
-  --chart-4: #c4694a;
-  --chart-5: #6b6154;
+  --chart-4: #e0693f;
+  --chart-5: #3b82f6;
   --radius: 0.4rem;
   --sidebar: #f7f3ec;
   --sidebar-foreground: #1e2430;
@@ -94,10 +96,16 @@
   --ink: #16273f;
   --ink-foreground: #f7f3ec;
   --ink-line: #24405f;
-  --signal-moss: #4c8c6b;
+  --signal-moss: #10b981;
   --signal-amber: #d19a3d;
-  --signal-rust: #c4694a;
+  --signal-rust: #ff5a5f;
   --signal-slate: #6b6154;
+
+  /* Palette intensifiee : accent terracotta principal (distinct du corail
+     d'alerte signal-rust) et accent secondaire bleu electrique (liens,
+     focus, actions). */
+  --terracotta: #e0693f;
+  --electric: #3b82f6;
 }
 
 .dark {

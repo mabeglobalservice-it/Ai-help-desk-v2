@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import {
   Bar,
   BarChart,
@@ -43,6 +44,8 @@ import { useSessionUser } from "@/lib/use-session-user";
 import { AppHeader } from "@/components/app-header";
 import { EmptyState } from "@/components/empty-state";
 import { DateField } from "@/components/date-field";
+import { CountUp } from "@/components/count-up";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -99,12 +102,16 @@ const dateTimeFormatter = new Intl.DateTimeFormat("fr-CA", { dateStyle: "medium"
 
 type KpiTone = "primary" | "amber" | "moss" | "slate" | "terracotta";
 
+// Icones des cartes KPI : degrade a deux tons plutot qu'un aplat, sur une
+// base douce (opacite 10-25%) pour rester un badge discret, pas un bloc
+// sature. "primary" reprend l'exemple terracotta -> corail donne pour SLA ;
+// "moss" emeraude -> vert clair pour Tickets resolus.
 const KPI_TONE_CLASSES: Record<KpiTone, string> = {
-  primary: "bg-primary/10 text-primary",
-  amber: "bg-signal-amber/15 text-signal-amber",
-  moss: "bg-signal-moss/15 text-signal-moss",
-  slate: "bg-signal-slate/15 text-signal-slate",
-  terracotta: "bg-signal-rust/15 text-signal-rust",
+  primary: "bg-gradient-to-br from-terracotta/25 to-signal-rust/15 text-terracotta",
+  amber: "bg-gradient-to-br from-signal-amber/25 to-signal-amber/10 text-signal-amber",
+  moss: "bg-gradient-to-br from-signal-moss/25 to-signal-moss/10 text-signal-moss",
+  slate: "bg-gradient-to-br from-electric/20 to-signal-slate/10 text-signal-slate",
+  terracotta: "bg-gradient-to-br from-electric/20 to-terracotta/20 text-terracotta",
 };
 
 function KpiCard({
@@ -112,21 +119,48 @@ function KpiCard({
   tone,
   label,
   value,
+  format,
+  index,
 }: {
   icon: LucideIcon;
   tone: KpiTone;
   label: string;
-  value: string;
+  value: number | null;
+  format: (n: number) => string;
+  index: number;
 }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay: index * 0.05 }}
+      whileHover={{ scale: 1.02, transition: { duration: 0.15 } }}
+    >
+      <Card className="transition-shadow duration-150 hover:shadow-lg">
+        <CardHeader>
+          <CardDescription>{label}</CardDescription>
+          <CardTitle className="text-3xl">
+            {value === null ? "—" : <CountUp value={value} format={format} />}
+          </CardTitle>
+          <CardAction>
+            <div className={cn("flex size-9 items-center justify-center rounded-full", KPI_TONE_CLASSES[tone])}>
+              <Icon className="size-4.5" aria-hidden="true" />
+            </div>
+          </CardAction>
+        </CardHeader>
+      </Card>
+    </motion.div>
+  );
+}
+
+function KpiCardSkeleton() {
   return (
     <Card>
       <CardHeader>
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-3xl">{value}</CardTitle>
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="mt-2 h-8 w-16" />
         <CardAction>
-          <div className={cn("flex size-9 items-center justify-center rounded-full", KPI_TONE_CLASSES[tone])}>
-            <Icon className="size-4.5" aria-hidden="true" />
-          </div>
+          <Skeleton className="size-9 rounded-full" />
         </CardAction>
       </CardHeader>
     </Card>
@@ -306,39 +340,53 @@ export default function DashboardPage() {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         ) : stats === null ? (
-          <p className="text-sm text-muted-foreground">Chargement des statistiques...</p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <KpiCardSkeleton key={i} />
+            ))}
+          </div>
         ) : (
           <div className="flex flex-col gap-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <KpiCard
+                index={0}
                 icon={ShieldCheck}
                 tone="primary"
                 label="SLA respecté"
-                value={formatPercentage(stats.slaComplianceRate)}
+                value={stats.slaComplianceRate}
+                format={(n) => formatPercentage(n)}
               />
               <KpiCard
+                index={1}
                 icon={Ticket}
                 tone="amber"
                 label="Tickets ouverts"
-                value={String(stats.totalOpen)}
+                value={stats.totalOpen}
+                format={(n) => String(Math.round(n))}
               />
               <KpiCard
+                index={2}
                 icon={CheckCircle2}
                 tone="moss"
                 label="Tickets résolus"
-                value={String(stats.totalResolved)}
+                value={stats.totalResolved}
+                format={(n) => String(Math.round(n))}
               />
               <KpiCard
+                index={3}
                 icon={Timer}
                 tone="slate"
                 label="Temps moyen de résolution"
-                value={formatResolutionTime(stats.averageResolutionHours)}
+                value={stats.averageResolutionHours}
+                format={(n) => formatResolutionTime(n)}
               />
               <KpiCard
+                index={4}
                 icon={Wand2}
                 tone="terracotta"
                 label="Correction manuelle IA"
-                value={formatPercentage(stats.aiCorrectionRate)}
+                value={stats.aiCorrectionRate}
+                format={(n) => formatPercentage(n)}
               />
             </div>
 
@@ -443,7 +491,11 @@ export default function DashboardPage() {
                     <AlertDescription>{modelReliabilityError}</AlertDescription>
                   </Alert>
                 ) : modelReliability === null ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">Chargement...</p>
+                  <div className="flex flex-col gap-2">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-9 w-full" />
+                    ))}
+                  </div>
                 ) : modelReliability.length === 0 ? (
                   <EmptyState
                     icon={Boxes}
@@ -502,41 +554,55 @@ export default function DashboardPage() {
                     <AlertDescription>{ragMetricsError}</AlertDescription>
                   </Alert>
                 ) : ragMetrics === null ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">Chargement...</p>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <KpiCardSkeleton key={i} />
+                    ))}
+                  </div>
                 ) : ragMetrics.totalSearches === 0 ? (
                   <EmptyState icon={Search} message="Aucune recherche effectuée pour le moment." />
                 ) : (
                   <div className="flex flex-col gap-6">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
                       <KpiCard
+                        index={0}
                         icon={Search}
                         tone="primary"
                         label="Recherches effectuées"
-                        value={String(ragMetrics.totalSearches)}
+                        value={ragMetrics.totalSearches}
+                        format={(n) => String(Math.round(n))}
                       />
                       <KpiCard
+                        index={1}
                         icon={Timer}
                         tone="slate"
                         label="Temps moyen de recherche"
-                        value={formatLatency(ragMetrics.avgLatencyMs)}
+                        value={ragMetrics.avgLatencyMs}
+                        format={(n) => formatLatency(n)}
                       />
                       <KpiCard
+                        index={2}
                         icon={Gauge}
                         tone="amber"
                         label="Score moyen de confiance"
-                        value={formatRatio(ragMetrics.avgConfidence)}
+                        value={ragMetrics.avgConfidence}
+                        format={(n) => formatRatio(n)}
                       />
                       <KpiCard
+                        index={3}
                         icon={CheckCircle2}
                         tone="moss"
                         label="Réponses pertinentes"
-                        value={formatRatio(ragMetrics.relevantResponseRate)}
+                        value={ragMetrics.relevantResponseRate}
+                        format={(n) => formatRatio(n)}
                       />
                       <KpiCard
+                        index={4}
                         icon={Wand2}
                         tone="terracotta"
                         label="Coût des appels IA"
-                        value={`${ragMetrics.aiCost.totalTokenCost.toFixed(2)} $`}
+                        value={ragMetrics.aiCost.totalTokenCost}
+                        format={(n) => `${n.toFixed(2)} $`}
                       />
                     </div>
 

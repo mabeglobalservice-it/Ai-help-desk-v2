@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { logout } from "@/lib/api";
 import { clearSession, getToken } from "@/lib/session";
 import { disconnectSocket } from "@/lib/socket";
@@ -98,17 +99,27 @@ export function AppHeader({ title, action }: AppHeaderProps) {
         <div className="mx-auto max-w-5xl overflow-x-auto px-6 pb-2">
           <Tabs value={activeHref ?? undefined}>
             <TabsList variant="line" className="w-max">
-              {visibleItems.map((item) => (
-                <TabsTrigger
-                  key={item.href}
-                  value={item.href}
-                  nativeButton={false}
-                  render={<Link href={item.href} />}
-                  className="data-active:font-semibold data-active:text-primary after:bg-primary"
-                >
-                  {item.label}
-                </TabsTrigger>
-              ))}
+              {visibleItems.map((item) => {
+                const isActive = item.href === activeHref;
+                return (
+                  <TabsTrigger
+                    key={item.href}
+                    value={item.href}
+                    nativeButton={false}
+                    render={<Link href={item.href} />}
+                    className="data-active:font-semibold data-active:text-primary after:opacity-0"
+                  >
+                    {isActive ? (
+                      <motion.div
+                        layoutId="nav-active-pill"
+                        className="absolute inset-0 rounded-md bg-primary/10"
+                        transition={{ type: "spring", bounce: 0.2, duration: 0.3 }}
+                      />
+                    ) : null}
+                    <span className="relative z-10">{item.label}</span>
+                  </TabsTrigger>
+                );
+              })}
             </TabsList>
           </Tabs>
         </div>
