@@ -14,11 +14,19 @@
   --color-ink-foreground: var(--ink-foreground);
   --color-ink-line: var(--ink-line);
   --color-signal-moss: var(--signal-moss);
+  --color-signal-moss-fg: var(--signal-moss-fg);
   --color-signal-amber: var(--signal-amber);
+  --color-signal-amber-fg: var(--signal-amber-fg);
   --color-signal-rust: var(--signal-rust);
   --color-signal-slate: var(--signal-slate);
   --color-terracotta: var(--terracotta);
+  --color-terracotta-fg: var(--terracotta-fg);
   --color-electric: var(--electric);
+  --color-surface-strong: var(--surface-strong);
+  --color-surface-strong-foreground: var(--surface-strong-foreground);
+  --color-surface-strong-muted: var(--surface-strong-muted);
+  --color-surface-strong-up: var(--surface-strong-up);
+  --color-surface-strong-down: var(--surface-strong-down);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -58,7 +66,12 @@
 }
 
 :root {
-  /* docs/12-maquettes-ui-ux.md §2, theme clair "Institutionnel" */
+  /* docs/12-maquettes-ui-ux.md §2 — theme clair "Institutionnel". Les teintes
+     du document (navy, terracotta, vert, ambre, creme) sont reprises telles
+     quelles pour les aplats ; les variantes *-fg sont la meme teinte
+     assombrie, reservee au texte : les valeurs du document n'atteignent pas
+     WCAG AA (4,5:1) en texte sur fond clair. */
+  color-scheme: light;
   --background: #f7f3ec;
   --foreground: #1e2430;
   --card: #ffffff;
@@ -71,83 +84,109 @@
   --secondary-foreground: #1e3a5f;
   --muted: #ede5d8;
   --muted-foreground: #6b6154;
-  --accent: #e5ecf3;
+  --accent: #e7edf4;
   --accent-foreground: #1e3a5f;
-  --destructive: #ff5a5f;
+  --destructive: #b3362b;
   --border: #e2d9c9;
-  --input: #e2d9c9;
-  --ring: #3b82f6;
+  --input: #d6cbb8;
+  --ring: #2f5d8f;
   --chart-1: #1e3a5f;
-  --chart-2: #10b981;
+  --chart-2: #4c8c6b;
   --chart-3: #d19a3d;
-  --chart-4: #e0693f;
-  --chart-5: #3b82f6;
+  --chart-4: #c4694a;
+  --chart-5: #3b6ea5;
   --radius: 0.4rem;
-  --sidebar: #f7f3ec;
+  --sidebar: #f1ebe0;
   --sidebar-foreground: #1e2430;
   --sidebar-primary: #1e3a5f;
   --sidebar-primary-foreground: #f7f3ec;
-  --sidebar-accent: #ede5d8;
-  --sidebar-accent-foreground: #1e2430;
+  --sidebar-accent: #e5ddcf;
+  --sidebar-accent-foreground: #1e3a5f;
   --sidebar-border: #e2d9c9;
-  --sidebar-ring: #1e3a5f;
+  --sidebar-ring: #2f5d8f;
+
+  /* Surface forte : bande "Etat du service" du tableau de bord, seule
+     surface navy pleine de l'ecran. */
+  --surface-strong: #1e3a5f;
+  --surface-strong-foreground: #f7f3ec;
+  --surface-strong-muted: #b9c6d6;
+  --surface-strong-up: #9fd8b8;
+  --surface-strong-down: #f2b49c;
 
   /* Signal system: shared across the ink login panel and ticket status/priority marks */
   --ink: #16273f;
   --ink-foreground: #f7f3ec;
   --ink-line: #24405f;
-  --signal-moss: #10b981;
+  --signal-moss: #4c8c6b;
+  --signal-moss-fg: #33694e;
   --signal-amber: #d19a3d;
-  --signal-rust: #ff5a5f;
+  --signal-amber-fg: #8a5a12;
+  --signal-rust: #b3362b;
   --signal-slate: #6b6154;
 
-  /* Palette intensifiee : accent terracotta principal (distinct du corail
-     d'alerte signal-rust) et accent secondaire bleu electrique (liens,
-     focus, actions). */
-  --terracotta: #e0693f;
-  --electric: #3b82f6;
+  /* Accent terracotta (docs/12 §2 : actions, priorite, elements
+     d'attention) et bleu secondaire derive du navy (graphiques, liens). */
+  --terracotta: #c4694a;
+  --terracotta-fg: #a24d31;
+  --electric: #3b6ea5;
 }
 
+/* docs/12 ne definit pas de theme sombre : il est derive de la meme famille
+   (fond bleu nuit, texte creme, navy eclairci) plutot que d'introduire une
+   nouvelle teinte. Contrastes verifies >= 4,5:1 pour tout texte. */
 .dark {
-  --background: #14171c;
-  --foreground: #e7e5df;
-  --card: #1b1f26;
-  --card-foreground: #e7e5df;
-  --popover: #1b1f26;
-  --popover-foreground: #e7e5df;
-  --primary: #6d8cf0;
-  --primary-foreground: #14171c;
-  --secondary: #262b33;
-  --secondary-foreground: #e7e5df;
-  --muted: #262b33;
-  --muted-foreground: #98a2b3;
-  --accent: #262b33;
-  --accent-foreground: #e7e5df;
-  --destructive: #d9695a;
-  --border: #262b33;
-  --input: #262b33;
-  --ring: #6d8cf0;
-  --chart-1: #6d8cf0;
-  --chart-2: #45b585;
-  --chart-3: #e0a73b;
-  --chart-4: #d9695a;
-  --chart-5: #98a2b3;
-  --sidebar: #14171c;
-  --sidebar-foreground: #e7e5df;
-  --sidebar-primary: #6d8cf0;
-  --sidebar-primary-foreground: #14171c;
-  --sidebar-accent: #262b33;
-  --sidebar-accent-foreground: #e7e5df;
-  --sidebar-border: #262b33;
-  --sidebar-ring: #6d8cf0;
+  color-scheme: dark;
+  --background: #0f1620;
+  --foreground: #ece5d8;
+  --card: #172231;
+  --card-foreground: #ece5d8;
+  --popover: #1a2638;
+  --popover-foreground: #ece5d8;
+  --primary: #93b4dc;
+  --primary-foreground: #0f1620;
+  --secondary: #1e2b3d;
+  --secondary-foreground: #ece5d8;
+  --muted: #1e2b3d;
+  --muted-foreground: #a3aebc;
+  --accent: #1f2e44;
+  --accent-foreground: #ece5d8;
+  --destructive: #f08a7b;
+  --border: #26354a;
+  --input: #2f4058;
+  --ring: #93b4dc;
+  --chart-1: #93b4dc;
+  --chart-2: #7cc09c;
+  --chart-3: #e3b467;
+  --chart-4: #e59a7c;
+  --chart-5: #6f9bd0;
+  --sidebar: #121b27;
+  --sidebar-foreground: #ece5d8;
+  --sidebar-primary: #93b4dc;
+  --sidebar-primary-foreground: #0f1620;
+  --sidebar-accent: #1f2e44;
+  --sidebar-accent-foreground: #ece5d8;
+  --sidebar-border: #26354a;
+  --sidebar-ring: #93b4dc;
 
-  --ink: #0d0f13;
-  --ink-foreground: #e7e5df;
-  --ink-line: #262b33;
-  --signal-moss: #45b585;
-  --signal-amber: #e0a73b;
-  --signal-rust: #d9695a;
-  --signal-slate: #98a2b3;
+  --surface-strong: #1b3354;
+  --surface-strong-foreground: #ece5d8;
+  --surface-strong-muted: #afc0d6;
+  --surface-strong-up: #9fd8b8;
+  --surface-strong-down: #f2b49c;
+
+  --ink: #0a1019;
+  --ink-foreground: #ece5d8;
+  --ink-line: #26354a;
+  --signal-moss: #6db08d;
+  --signal-moss-fg: #7cc09c;
+  --signal-amber: #e0ad5a;
+  --signal-amber-fg: #e3b467;
+  --signal-rust: #f08a7b;
+  --signal-slate: #a3aebc;
+
+  --terracotta: #d98466;
+  --terracotta-fg: #e59a7c;
+  --electric: #6f9bd0;
 }
 
 @layer base {
@@ -159,5 +198,16 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
