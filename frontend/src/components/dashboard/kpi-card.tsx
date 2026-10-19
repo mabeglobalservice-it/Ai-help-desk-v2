@@ -60,6 +60,21 @@ export function Trend({ delta, formatDelta, goodWhen, onStrong = false }: TrendP
   );
 }
 
+// Texte de remplacement de la tendance quand aucune comparaison n'est
+// possible (periode precedente vide, non bornee ou indisponible).
+export function NoComparison({ onStrong = false }: { onStrong?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "truncate text-xs",
+        onStrong ? "text-surface-strong-muted" : "text-muted-foreground",
+      )}
+    >
+      Pas de comparaison disponible
+    </span>
+  );
+}
+
 interface KpiCardProps {
   icon: LucideIcon;
   label: string;
@@ -68,15 +83,29 @@ interface KpiCardProps {
   value: string | null;
   // Message affiche a la place de la valeur quand elle est absente.
   emptyMessage: string;
+  // Explication courte du chiffre, affichee sous la valeur.
+  hint?: string;
   trend?: ReactNode;
-  // Pied de carte quand il n'y a pas de tendance (ex. action suggeree).
+  // Pied de carte quand il n'y a pas de valeur (ex. action suggeree).
   footer?: ReactNode;
   children?: ReactNode;
 }
 
-// Structure fixe (libelle / valeur / pied) pour que toutes les cartes d'une
-// rangee aient la meme hauteur et des chiffres alignes sur la meme ligne.
-export function KpiCard({ icon: Icon, label, fullLabel, value, emptyMessage, trend, footer, children }: KpiCardProps) {
+// Structure fixe (libelle / valeur / explication / tendance) : la valeur est
+// a la meme hauteur sur toutes les cartes d'une rangee, et la ligne de
+// tendance est poussee en bas de carte pour rester alignee elle aussi.
+export function KpiCard({
+  icon: Icon,
+  label,
+  fullLabel,
+  value,
+  emptyMessage,
+  hint,
+  trend,
+  footer,
+  children,
+}: KpiCardProps) {
+  const bottom = value !== null ? (trend ?? footer) : (footer ?? trend);
   return (
     <Card className="@container h-full gap-0 px-4 py-4">
       <div className="flex items-center justify-between gap-2">
@@ -102,7 +131,10 @@ export function KpiCard({ icon: Icon, label, fullLabel, value, emptyMessage, tre
           </p>
         )}
       </div>
-      <div className="mt-3 flex min-h-5 items-center">{value !== null && trend ? trend : footer}</div>
+      {hint && value !== null ? (
+        <p className="mt-2 line-clamp-2 text-xs leading-snug text-muted-foreground">{hint}</p>
+      ) : null}
+      <div className="mt-auto flex min-h-5 items-center pt-3">{bottom}</div>
       {children}
     </Card>
   );

@@ -55,6 +55,7 @@ import {
 import {
   KpiCard,
   KpiCardSkeleton,
+  NoComparison,
   Trend,
   formatDecimal,
   formatDuration,
@@ -122,8 +123,8 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-// Compte a rebours reel jusqu'a l'echeance SLA, mis a jour chaque seconde.
-function SlaCountdown({ dueAt, className }: { dueAt: string; className?: string }) {
+// Horloge partagee par les blocs SLA, mise a jour chaque seconde.
+function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -131,8 +132,39 @@ function SlaCountdown({ dueAt, className }: { dueAt: string; className?: string 
     return () => clearInterval(id);
   }, []);
 
-  const diff = Math.max(0, new Date(dueAt).getTime() - now);
-  if (diff <= 0) return <Badge variant="destructive">SLA dépassé</Badge>;
+  return now;
+}
+
+function isOverdue(dueAt: string, now: number): boolean {
+  return new Date(dueAt).getTime() <= now;
+}
+
+// Titre du bloc SLA : bascule en direct quand l'echeance est franchie.
+function slaHeading(ticket: TicketRecord | null, now: number): string {
+  return ticket?.slaDueAt && isOverdue(ticket.slaDueAt, now) ? "SLA dépassé" : "Prochaine échéance SLA";
+}
+
+function formatOverdue(ms: number): string {
+  const totalMinutes = Math.floor(ms / 60_000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days} j ${hours} h`;
+  if (hours > 0) return `${hours} h ${pad2(minutes)} min`;
+  return `${minutes} min`;
+}
+
+// Compte a rebours reel jusqu'a l'echeance SLA ; une fois depassee, le titre
+// du bloc indique deja « SLA dépassé », le badge donne donc le retard.
+function SlaCountdown({ dueAt, now, className }: { dueAt: string; now: number; className?: string }) {
+  const diff = new Date(dueAt).getTime() - now;
+  if (diff <= 0) {
+    return (
+      <Badge variant="destructive" className="mt-2">
+        En retard de {formatOverdue(-diff)}
+      </Badge>
+    );
+  }
 
   const hours = Math.floor(diff / 3_600_000);
   const minutes = Math.floor((diff % 3_600_000) / 60_000);
@@ -154,15 +186,16 @@ function SlaCountdown({ dueAt, className }: { dueAt: string; className?: string 
 // affichee uniquement quand le taux de SLA existe sur la periode.
 function ServiceStateBand({
   slaRate,
-  slaDelta,
+  slaTrend,
   periodLabel,
   nextSlaTicket,
 }: {
   slaRate: number;
-  slaDelta: number | null;
+  slaTrend: ReactNode;
   periodLabel: string;
   nextSlaTicket: TicketRecord | null;
 }) {
+  const now = useNow();
   return (
     <section
       aria-labelledby="service-state-title"
@@ -181,9 +214,7 @@ function ServiceStateBand({
           </p>
           <div className="flex flex-col gap-1 pb-0.5">
             <p className="font-heading text-lg leading-none font-semibold">SLA respecté</p>
-            {slaDelta !== null ? (
-              <Trend delta={slaDelta} goodWhen="up" formatDelta={(n) => `${formatDecimal(n)} pt`} onStrong />
-            ) : null}
+            <div className="flex min-h-4 items-center">{slaTrend}</div>
           </div>
         </div>
         <div
@@ -199,7 +230,7 @@ function ServiceStateBand({
 
       <div className="min-w-0 border-t border-surface-strong-foreground/15 pt-5 @3xl:border-t-0 @3xl:border-l @3xl:pt-0 @3xl:pl-6">
         <h3 className="font-mono text-xs tracking-[0.14em] text-surface-strong-muted uppercase">
-          Prochaine échéance SLA
+          {slaHeading(nextSlaTicket, now)}
         </h3>
         {nextSlaTicket?.slaDueAt ? (
           <>
@@ -211,6 +242,7 @@ function ServiceStateBand({
             </Link>
             <SlaCountdown
               dueAt={nextSlaTicket.slaDueAt}
+              now={now}
               className="mt-2 block font-mono text-3xl leading-none tabular-nums"
             />
           </>
@@ -222,6 +254,30 @@ function ServiceStateBand({
       </div>
     </section>
   );
+}
+
+// Variante compacte, quand il n'y a pas de taux SLA sur la periode.
+function CompactSlaCard({ ticket }: { ticket: TicketRecord & { slaDueAt: string } }) {
+  const now = useNow();
+  return (
+    <Card className="flex-row flex-wrap items-center gap-x-4 gap-y-1 px-4">
+      <Timer className="size-4 text-muted-foreground" aria-hidden="true" />
+      <h2 className="text-sm font-medium text-muted-foreground">{slaHeading(ticket, now)}</h2>
+      <Link
+        href={`/tickets/${ticket.id}`}
+        className="min-w-0 flex-1 truncate text-sm font-medium text-primary underline-offset-4 hover:underline"
+      >
+        {ticket.reference} — {ticket.title}
+      </Link>
+      <SlaCountdown dueAt={ticket.slaDueAt} now={now} className="font-mono text-lg tabular-nums text-foreground" />
+    </Card>
+  );
+}
+
+// La periode precedente compte comme « sans donnees » si elle n'a aucun
+// ticket : une variation calculee contre zero n'aurait pas de sens.
+function hasAnyData(stats: DashboardStats): boolean {
+  return stats.totalOpen + stats.totalResolved > 0 || stats.byCategory.length > 0;
 }
 
 function SectionCard({
@@ -265,7 +321,8 @@ export default function DashboardPage() {
   // Statistiques de la periode precedente de meme duree, etiquetees par la
   // periode courante a laquelle elles se comparent (evite d'afficher une
   // tendance calculee pour une autre periode pendant un rechargement).
-  const [previous, setPrevious] = useState<{ key: string; stats: DashboardStats } | null>(null);
+  // stats null = chargement termine en echec (pas de comparaison possible).
+  const [previous, setPrevious] = useState<{ key: string; stats: DashboardStats | null } | null>(null);
   const [nextSlaTicket, setNextSlaTicket] = useState<TicketRecord | null>(null);
 
   useEffect(() => {
@@ -319,7 +376,7 @@ export default function DashboardPage() {
 
     getDashboardStats(token, { from: prev.from, to: prev.to })
       .then((data) => setPrevious({ key, stats: data }))
-      .catch(() => setPrevious(null));
+      .catch(() => setPrevious({ key, stats: null }));
   }, [user, fromDate, toDate]);
 
   // Prochain SLA a echeance : uniquement si un vrai ticket ouvert avec une
@@ -400,7 +457,23 @@ export default function DashboardPage() {
   }
 
   const hasTrendPeriod = previousPeriod(period) !== null;
-  const prevStats = hasTrendPeriod && previous?.key === `${fromDate}/${toDate}` ? previous.stats : null;
+  const prevEntry = hasTrendPeriod && previous?.key === `${fromDate}/${toDate}` ? previous : null;
+  // Pendant le chargement de la periode precedente, la ligne de tendance
+  // reste vide (place reservee) plutot que d'annoncer a tort qu'aucune
+  // comparaison n'est disponible.
+  const comparisonLoading = hasTrendPeriod && prevEntry === null;
+  const prevStats = prevEntry?.stats && hasAnyData(prevEntry.stats) ? prevEntry.stats : null;
+
+  const renderTrend = (
+    trendDelta: number | null,
+    goodWhen: "up" | "down",
+    formatDelta: (n: number) => string,
+    onStrong = false,
+  ): ReactNode => {
+    if (comparisonLoading) return null;
+    if (trendDelta === null) return <NoComparison onStrong={onStrong} />;
+    return <Trend delta={trendDelta} goodWhen={goodWhen} formatDelta={formatDelta} onStrong={onStrong} />;
+  };
 
   const resolutionRateOf = (s: DashboardStats) =>
     s.totalOpen + s.totalResolved > 0 ? (s.totalResolved / (s.totalOpen + s.totalResolved)) * 100 : null;
@@ -423,6 +496,7 @@ export default function DashboardPage() {
     fullLabel?: string;
     value: string | null;
     emptyMessage: string;
+    hint?: string;
     trend: { delta: number | null; goodWhen: "up" | "down"; format: (n: number) => string };
     footer?: ReactNode;
     meter?: number | null;
@@ -499,10 +573,10 @@ export default function DashboardPage() {
         {
           key: "ai-correction",
           icon: Wand2,
-          label: "Correction IA",
-          fullLabel: "Tickets IA corrigés manuellement",
+          label: "Réponses IA corrigées",
           value: stats.aiCorrectionRate === null ? null : formatPercent(stats.aiCorrectionRate),
           emptyMessage: "Aucun ticket créé via l'assistant IA",
+          hint: "Part des suggestions de l'IA modifiées à la main : plus c'est bas, mieux c'est.",
           trend: {
             delta: delta(stats.aiCorrectionRate, prevStats?.aiCorrectionRate),
             goodWhen: "down",
@@ -552,25 +626,12 @@ export default function DashboardPage() {
               {slaRate !== null ? (
                 <ServiceStateBand
                   slaRate={slaRate}
-                  slaDelta={delta(slaRate, prevStats?.slaComplianceRate)}
+                  slaTrend={renderTrend(delta(slaRate, prevStats?.slaComplianceRate), "up", pointDelta, true)}
                   periodLabel={periodLabel}
                   nextSlaTicket={nextSlaTicket}
                 />
               ) : nextSlaTicket?.slaDueAt ? (
-                <Card className="flex-row flex-wrap items-center gap-x-4 gap-y-1 px-4">
-                  <Timer className="size-4 text-muted-foreground" aria-hidden="true" />
-                  <h2 className="text-sm font-medium text-muted-foreground">Prochaine échéance SLA</h2>
-                  <Link
-                    href={`/tickets/${nextSlaTicket.id}`}
-                    className="min-w-0 flex-1 truncate text-sm font-medium text-primary underline-offset-4 hover:underline"
-                  >
-                    {nextSlaTicket.reference} — {nextSlaTicket.title}
-                  </Link>
-                  <SlaCountdown
-                    dueAt={nextSlaTicket.slaDueAt}
-                    className="font-mono text-lg tabular-nums text-foreground"
-                  />
-                </Card>
+                <CompactSlaCard ticket={{ ...nextSlaTicket, slaDueAt: nextSlaTicket.slaDueAt }} />
               ) : null}
 
               <section aria-label={`Indicateurs clés, ${periodLabel}`}>
@@ -589,15 +650,8 @@ export default function DashboardPage() {
                         fullLabel={kpi.fullLabel}
                         value={kpi.value}
                         emptyMessage={kpi.emptyMessage}
-                        trend={
-                          kpi.trend.delta !== null ? (
-                            <Trend
-                              delta={kpi.trend.delta}
-                              goodWhen={kpi.trend.goodWhen}
-                              formatDelta={kpi.trend.format}
-                            />
-                          ) : null
-                        }
+                        hint={kpi.hint}
+                        trend={renderTrend(kpi.trend.delta, kpi.trend.goodWhen, kpi.trend.format)}
                         footer={kpi.footer}
                       >
                         {kpi.meter !== undefined && kpi.meter !== null ? (

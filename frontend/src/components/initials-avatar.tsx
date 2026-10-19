@@ -7,11 +7,17 @@ const AVATAR_TONES = [
   "bg-signal-moss/15 text-signal-moss",
 ];
 
+// Ignore le texte entre parentheses (ex. suffixe « (démo) ») et tout
+// caractere non alphabetique, pour ne jamais afficher « K( » ou « M- ».
 function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/);
+  const parts = name
+    .replace(/\([^)]*\)/g, " ")
+    .split(/\s+/)
+    .map((part) => part.replace(/[^\p{L}]/gu, ""))
+    .filter(Boolean);
   const first = parts[0]?.[0] ?? "";
   const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
-  return (first + last).toUpperCase();
+  return (first + last).toLocaleUpperCase("fr-CA");
 }
 
 interface InitialsAvatarProps {
