@@ -2,6 +2,8 @@
 
 *Audit en lecture seule réalisé le 13 octobre 2026 sur `master` (`b230883`) et sur la branche `feat/dashboard-sidebar-theme` (`147578a`, non fusionnée). Aucun fichier de code n'a été modifié.*
 
+> **Mis à jour le 21 octobre 2026** : plusieurs constats ont changé depuis (interface fusionnée, CI au vert, démo en ligne de nouveau accessible). Les sections 0 à 6 décrivent l'état au 13 octobre ; voir la **section 7** pour l'état actuel et une correction.
+
 ## 0. Méthode et périmètre
 
 **Sources de référence**
@@ -337,3 +339,75 @@ Calcul : (40 + 85 + 75 + 100 + 15) / 5 = **63 %**. Le critère le plus bloquant 
 | 5 | **Combler l'audit et le RAG du Diagnostic** : journaliser les échecs, les agents IA, les connaissances et les connexions ; injecter des extraits RAG dans `converseDiagnostic`. Puis un README vitrine avec captures, schéma, scénario de démo et tableau « réel / simulé ». | Moyen | Fait passer l'audit à environ 95 % et rend la promesse V4 vraie pour l'agent le plus visible |
 
 Cible après ces 5 tâches : environ 90 % vers la version portfolio. Le reste relève de la vision (Graph, Intune, SSO, multi-tenant), pas d'une démo.
+
+---
+
+## 7. Mise à jour du 21 octobre 2026
+
+*État de `master` au commit `69ff79c`. Les sections 0 à 6 ne sont pas réécrites : cette section indique ce qui a changé depuis le 13 octobre.*
+
+### 7.1 Ce qui a changé
+
+| Sujet | Le 13 octobre | Le 21 octobre | Preuve |
+|---|---|---|---|
+| Interface | Branche non fusionnée, sans pull request ni CI | **Fusionnée dans `master`** par la pull request #1 (commit de fusion `245dea0`), branche supprimée | Commits `147578a`, `a8b632a` (corrections du Tableau de bord : initiales, carte « Réponses IA corrigées », titre « SLA dépassé », « Pas de comparaison disponible », cartes KPI alignées) |
+| `next build` | Non exécuté | **Réussi** en local et en CI, y compris sur un clone propre avec Node 20 | CI de la pull request #1 et de `master` |
+| CI | Au vert sur `master`, jamais lancée sur la branche | **Au vert sur `master` (`69ff79c`)** pour les 3 workflows | API GitHub, exécutions du 21 octobre |
+| Démo en ligne | Backend Render sans réponse | **Backend et frontend répondent** (0,4 s) ; le backend lit la base | `GET /api/v1/auth/me` → 401 ; connexion d'un compte inexistant → 401 « Identifiants invalides » ; frontend → 200 |
+| Base de production | Postgres Render gratuit, probablement expiré | **Migrée vers Neon** (33 migrations appliquées, selon le propriétaire du projet) | Le backend Render interroge la base sans erreur |
+| Données de démonstration | Aucune | **Script `npm run seed:demo`** : 9 comptes `@demo.example` (1 superviseur, 4 techniciens, 4 employés), 4 équipes, 6 actifs, 12 tickets sur 30 jours, 4 articles et 2 documents indexés pour la recherche | Commit `1654c7f` ; testé sur une base locale (second passage sans doublon) |
+
+**Incident de CI résolu en route.** Les jobs « Frontend tests » et « Docker build » échouaient sur la pull request : `next/font/google` télécharge les polices chez Google pendant `next build`, et ce téléchargement échouait en CI (`module-not-found` sur la police Source Serif 4). Les trois polices sont désormais hébergées dans le dépôt (`frontend/src/app/fonts`, `next/font/local`, licence SIL OFL 1.1) : la compilation ne dépend plus du réseau (commit `82622a6`).
+
+### 7.2 Correction d'un constat du 13 octobre
+
+Le rapport affirmait l'**absence de limitation de débit sur `/diagnostics`** (§2.7, §4 point 11, §5 risque 3). C'est inexact : un limiteur global (`ThrottlerGuard`, `app.module.ts:71` et `:92`) applique **100 requêtes par minute et par adresse IP** à toutes les routes, y compris `/diagnostics`. Ce qui manque, c'est une limite **dédiée et plus stricte** sur cette route coûteuse en IA, comme il en existe sur la connexion (5 par minute, `auth.controller.ts:67`) et sur l'automatisation (10 par minute). Le risque est donc réduit, mais pas éliminé.
+
+### 7.3 Ce qui n'a pas changé
+
+- Agents IA, RAG (sans pgvector, sans RAG pour Diagnostic et Help Desk), intégrations Graph / Intune / Entra ID, journal d'audit incomplet, exécution d'automatisation simulée : aucun commit ne les a touchés.
+- Les **16 autres pages** n'ont toujours que l'enveloppe (barre latérale et en-tête) ; les 10 textes sous le contraste AA et les références de spécification visibles demeurent.
+- **Aucun test frontend ni Playwright.**
+- Pièces jointes toujours stockées sur un disque éphémère.
+
+### 7.4 Ce qui n'a pas été vérifié
+
+- La présence du seed, du compte Admin et des données de démonstration sur la base Neon : la vérification s'est limitée à constater que la base répond, sans connexion avec un compte réel.
+- Le rendu visuel des pages après la fusion (vérifié par le propriétaire du projet dans son navigateur, pas par l'audit).
+- Les limites du plan gratuit de Neon.
+
+### 7.5 Pourcentages mis à jour
+
+**Vision complète : ≈ 56 %, inchangé.** Les commits depuis le 13 octobre portent sur l'interface, la CI et la démo, pas sur les fonctionnalités des piliers.
+
+**Version portfolio : ≈ 63 % → ≈ 74 %**, même méthode qu'au §3.2 :
+
+| Critère | Avant | Après | Justification |
+|---|---|---|---|
+| Interface terminée | 40 % | 45 % | Tableau de bord fusionné, compilé et corrigé ; mais toujours 1 page sur 17 alignée |
+| CI au vert | 85 % | 90 % | CI exercée sur une pull request et au vert sur `master` ; toujours aucun test frontend ni E2E |
+| Journal d'audit branché | 75 % | 75 % | Inchangé |
+| 1 ou 2 agents IA de bout en bout | 100 % | 100 % | Inchangé |
+| Démo en ligne stable | 15 % | 60 % | Backend et frontend de nouveau en ligne, base Neon sans expiration à 30 jours, script de données de démonstration ; présence des données en production non vérifiée, pas de limite dédiée sur `/diagnostics` |
+
+Calcul : (45 + 90 + 75 + 100 + 60) / 5 = **74 %**.
+
+### 7.6 Risques et tâches prioritaires
+
+**Risques du §5**
+- Risque critique 1 (démo hors service) : **levé**, sous réserve que les données soient bien présentes sur Neon.
+- Risque critique 2 (interface non fusionnée et non validée) : **levé**.
+- Risque élevé 3 (débit sur `/diagnostics`) : **réduit** (voir §7.2) ; il devient la priorité de sécurité maintenant que la démo est publique.
+- Les autres risques sont inchangés.
+
+**Avancement des 5 tâches du §6**
+
+| # | Tâche | État |
+|---|---|---|
+| 1 | Remettre la démo en ligne | **Largement fait** : base sur Neon, services en ligne. Reste une limite dédiée sur `/diagnostics` et la vérification des données en production. |
+| 2 | Données et comptes de démonstration | **Script fait** (`seed:demo`). Reste à confirmer son exécution sur Neon et à afficher les comptes par rôle sur la page de connexion de la démo. |
+| 3 | Fusionner et terminer l'interface | **Fusion faite.** Restent les 16 pages, les 10 textes AA, les références de spécification, l'entrée Tickets dans la barre latérale et l'avis sur le diagnostic. |
+| 4 | Test E2E Playwright en CI | Non commencé. |
+| 5 | Journal d'audit, RAG du Diagnostic, README vitrine | Non commencé. |
+
+Nouvel ordre conseillé : limite dédiée sur `/diagnostics` et vérification des données de démo (petit effort), puis les tâches 3, 4 et 5.
