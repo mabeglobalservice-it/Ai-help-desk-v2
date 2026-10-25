@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { DenyReadOnly } from '../auth/decorators/read-only.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -13,6 +14,7 @@ import { SetActiveAiProviderDto } from './dto/set-active-ai-provider.dto';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.ADMIN)
+@DenyReadOnly()
 @Controller('ai')
 export class AiAgentsController {
   constructor(private readonly aiAgentsService: AiAgentsService) {}

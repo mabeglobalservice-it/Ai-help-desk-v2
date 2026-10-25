@@ -11,6 +11,7 @@ import type { Server, Socket } from 'socket.io';
 interface SocketJwtPayload {
   sub: string;
   role: string;
+  isReadOnly?: boolean;
 }
 
 interface AuthenticatedSocketData {
@@ -50,7 +51,11 @@ export class RealtimeGateway
       data.role = payload.role;
 
       await client.join(`user:${payload.sub}`);
-      await client.join(`role:${payload.role}`);
+      // Les diffusions par rôle (ex. ticket.created) transportent les emails
+      // des utilisateurs : un compte en lecture seule ne les reçoit pas.
+      if (!payload.isReadOnly) {
+        await client.join(`role:${payload.role}`);
+      }
     } catch (error) {
       this.logger.warn(
         `Rejecting unauthenticated socket connection: ${(error as Error).message}`,

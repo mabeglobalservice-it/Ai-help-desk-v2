@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { useSessionUser } from "@/lib/use-session-user";
 
 // Pages hors application (connexion, redirection d'accueil) : pas de barre
 // laterale.
@@ -27,13 +28,24 @@ function initialSidebarOpen(): boolean {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [defaultOpen] = useState(initialSidebarOpen);
+  const user = useSessionUser();
 
   if (BARE_ROUTES.has(pathname)) return <>{children}</>;
 
   return (
     <SidebarProvider defaultOpen={defaultOpen}>
       <AppSidebar />
-      <SidebarInset className="min-w-0">{children}</SidebarInset>
+      <SidebarInset className="min-w-0">
+        {user?.isReadOnly ? (
+          <p
+            role="status"
+            className="border-b border-border bg-muted px-3 py-1 text-center text-xs text-muted-foreground"
+          >
+            Compte de démonstration — lecture seule
+          </p>
+        ) : null}
+        {children}
+      </SidebarInset>
     </SidebarProvider>
   );
 }

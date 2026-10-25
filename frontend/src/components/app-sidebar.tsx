@@ -25,7 +25,7 @@ export function AppSidebar() {
   const pathname = usePathname();
   const user = useSessionUser();
   const { state, isMobile, toggleSidebar, setOpenMobile } = useSidebar();
-  const groups = visibleNavGroups(user?.role);
+  const groups = visibleNavGroups(user?.role, user?.isReadOnly === true);
   const activeHref = activeNavHref(groups, pathname);
   const collapsed = state === "collapsed" && !isMobile;
 

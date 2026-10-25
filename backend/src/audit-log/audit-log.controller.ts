@@ -1,5 +1,6 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { DenyReadOnly } from '../auth/decorators/read-only.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -10,6 +11,7 @@ import { FindAuditLogsQueryDto } from './dto/find-audit-logs-query.dto';
 @ApiTags('audit-logs')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@DenyReadOnly()
 @Controller('audit-logs')
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}

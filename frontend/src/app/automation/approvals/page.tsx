@@ -183,7 +183,7 @@ export default function AutomationApprovalsPage() {
                         Justification : « {run.justification} »
                       </p>
 
-                      {rejectingId === approval.id ? (
+                      {user?.isReadOnly ? null : rejectingId === approval.id ? (
                         <div className="mt-3 flex flex-col gap-2">
                           <Textarea
                             value={note}

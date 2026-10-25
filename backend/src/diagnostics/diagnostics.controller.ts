@@ -10,6 +10,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
+import { AllowReadOnly } from '../auth/decorators/read-only.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -35,9 +36,10 @@ export class DiagnosticsController {
   @ApiOperation({
     summary: 'Démarre ou poursuit une conversation de diagnostic',
     description:
-      "Réservé aux rôles EMPLOYEE, TECHNICIAN. Sans conversationId, démarre une nouvelle conversation ; avec, le message est traité comme la réponse à la dernière question posée par l'Agent Help Desk.",
+      "Réservé aux rôles EMPLOYEE, TECHNICIAN, SUPERVISOR. Sans conversationId, démarre une nouvelle conversation ; avec, le message est traité comme la réponse à la dernière question posée par l'Agent Help Desk.",
   })
-  @Roles(Role.EMPLOYEE, Role.TECHNICIAN)
+  @Roles(Role.EMPLOYEE, Role.TECHNICIAN, Role.SUPERVISOR)
+  @AllowReadOnly()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post()
   startOrContinue(@Body() dto: StartDiagnosticDto, @Req() req: Request) {
@@ -67,7 +69,8 @@ export class DiagnosticsController {
     summary: 'Confirme si le problème persiste après les étapes suggérées',
     description: 'Réservé au propriétaire de la conversation',
   })
-  @Roles(Role.EMPLOYEE, Role.TECHNICIAN)
+  @Roles(Role.EMPLOYEE, Role.TECHNICIAN, Role.SUPERVISOR)
+  @AllowReadOnly()
   @Post(':conversationId/resolve')
   resolveConversation(
     @Param('conversationId') conversationId: string,

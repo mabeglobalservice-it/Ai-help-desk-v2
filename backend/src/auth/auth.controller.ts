@@ -16,6 +16,7 @@ import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { AllowReadOnly } from './decorators/read-only.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 const REFRESH_TOKEN_COOKIE = 'refreshToken';
@@ -116,6 +117,7 @@ export class AuthController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
+  @AllowReadOnly()
   @Post('logout')
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const requester = req.user as { userId: string };

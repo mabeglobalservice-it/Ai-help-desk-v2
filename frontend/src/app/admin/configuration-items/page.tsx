@@ -175,109 +175,111 @@ export default function AdminConfigurationItemsPage() {
 
       <main className="mx-auto max-w-5xl px-6 py-8">
         <div className="flex flex-col gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-xl">Ajouter un Configuration Item</CardTitle>
-              <CardDescription>
-                Un CI peut ensuite être lié à un ticket pour connaître les incidents qui le
-                concernent.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {createError ? (
-                <Alert variant="destructive" className="mb-4">
-                  <AlertDescription>{createError}</AlertDescription>
-                </Alert>
-              ) : null}
-              <form className="grid grid-cols-1 gap-4 sm:grid-cols-2" onSubmit={handleCreate} noValidate>
-                <div className="space-y-2">
-                  <Label htmlFor="new-ci-name">Nom</Label>
-                  <Input
-                    id="new-ci-name"
-                    required
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Ex. SRV-FICHIERS-01"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-ci-type">Type</Label>
-                  <Select value={ciTypeId} onValueChange={(value) => setCiTypeId((value as string) ?? "")}>
-                    <SelectTrigger id="new-ci-type" className="w-full">
-                      <SelectValue placeholder="Choisir un type">
-                        {(value: string | null) =>
-                          ciTypes.find((type) => type.id === value)?.name ?? "Choisir un type"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ciTypes.map((type) => (
-                        <SelectItem key={type.id} value={type.id}>
-                          {type.name}
-                        </SelectItem>
+          {user?.isReadOnly ? null : (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-xl">Ajouter un Configuration Item</CardTitle>
+                <CardDescription>
+                  Un CI peut ensuite être lié à un ticket pour connaître les incidents qui le
+                  concernent.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {createError ? (
+                  <Alert variant="destructive" className="mb-4">
+                    <AlertDescription>{createError}</AlertDescription>
+                  </Alert>
+                ) : null}
+                <form className="grid grid-cols-1 gap-4 sm:grid-cols-2" onSubmit={handleCreate} noValidate>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-ci-name">Nom</Label>
+                    <Input
+                      id="new-ci-name"
+                      required
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="Ex. SRV-FICHIERS-01"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-ci-type">Type</Label>
+                    <Select value={ciTypeId} onValueChange={(value) => setCiTypeId((value as string) ?? "")}>
+                      <SelectTrigger id="new-ci-type" className="w-full">
+                        <SelectValue placeholder="Choisir un type">
+                          {(value: string | null) =>
+                            ciTypes.find((type) => type.id === value)?.name ?? "Choisir un type"
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ciTypes.map((type) => (
+                          <SelectItem key={type.id} value={type.id}>
+                            {type.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-ci-inventory">Numéro d&apos;inventaire</Label>
+                    <Input
+                      id="new-ci-inventory"
+                      required
+                      value={inventoryNumber}
+                      onChange={(event) => setInventoryNumber(event.target.value)}
+                      placeholder="Ex. INV-00123"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-ci-serial">Numéro de série (optionnel)</Label>
+                    <Input
+                      id="new-ci-serial"
+                      value={serialNumber}
+                      onChange={(event) => setSerialNumber(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-ci-manufacturer">Fabricant (optionnel)</Label>
+                    <Input
+                      id="new-ci-manufacturer"
+                      list="manufacturer-suggestions"
+                      value={manufacturerName}
+                      onChange={(event) => setManufacturerName(event.target.value)}
+                      placeholder="Ex. Dell"
+                    />
+                    <datalist id="manufacturer-suggestions">
+                      {manufacturers.map((manufacturer) => (
+                        <option key={manufacturer.id} value={manufacturer.name} />
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-ci-inventory">Numéro d&apos;inventaire</Label>
-                  <Input
-                    id="new-ci-inventory"
-                    required
-                    value={inventoryNumber}
-                    onChange={(event) => setInventoryNumber(event.target.value)}
-                    placeholder="Ex. INV-00123"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-ci-serial">Numéro de série (optionnel)</Label>
-                  <Input
-                    id="new-ci-serial"
-                    value={serialNumber}
-                    onChange={(event) => setSerialNumber(event.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-ci-manufacturer">Fabricant (optionnel)</Label>
-                  <Input
-                    id="new-ci-manufacturer"
-                    list="manufacturer-suggestions"
-                    value={manufacturerName}
-                    onChange={(event) => setManufacturerName(event.target.value)}
-                    placeholder="Ex. Dell"
-                  />
-                  <datalist id="manufacturer-suggestions">
-                    {manufacturers.map((manufacturer) => (
-                      <option key={manufacturer.id} value={manufacturer.name} />
-                    ))}
-                  </datalist>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-ci-model">Modèle (optionnel)</Label>
-                  <Input
-                    id="new-ci-model"
-                    value={modelName}
-                    onChange={(event) => setModelName(event.target.value)}
-                    placeholder="Ex. Latitude 5420"
-                    disabled={!manufacturerName.trim()}
-                    title={
-                      manufacturerName.trim()
-                        ? undefined
-                        : "Renseignez d'abord le fabricant"
-                    }
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <Button
-                    type="submit"
-                    disabled={isSubmitting || !name.trim() || !ciTypeId || !inventoryNumber.trim()}
-                  >
-                    {isSubmitting ? "Création..." : "Ajouter"}
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
+                    </datalist>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-ci-model">Modèle (optionnel)</Label>
+                    <Input
+                      id="new-ci-model"
+                      value={modelName}
+                      onChange={(event) => setModelName(event.target.value)}
+                      placeholder="Ex. Latitude 5420"
+                      disabled={!manufacturerName.trim()}
+                      title={
+                        manufacturerName.trim()
+                          ? undefined
+                          : "Renseignez d'abord le fabricant"
+                      }
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Button
+                      type="submit"
+                      disabled={isSubmitting || !name.trim() || !ciTypeId || !inventoryNumber.trim()}
+                    >
+                      {isSubmitting ? "Création..." : "Ajouter"}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

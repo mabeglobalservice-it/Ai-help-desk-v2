@@ -192,9 +192,12 @@ export default function TicketDetailPage() {
   }, [router, params.id]);
 
   const isPrivileged = user?.role === "SUPERVISOR" || user?.role === "ADMIN";
+  // Compte de démonstration : aucune action proposée, et GET /users lui est
+  // refusé (emails réels) — la liste des techniciens n'est pas chargée.
+  const isReadOnly = user?.isReadOnly === true;
 
   useEffect(() => {
-    if (!isPrivileged) return;
+    if (!isPrivileged || isReadOnly) return;
     const token = getToken();
     if (!token) return;
 
@@ -203,7 +206,7 @@ export default function TicketDetailPage() {
       .catch(() => {
         // best-effort: the assignment dropdown just stays empty
       });
-  }, [isPrivileged]);
+  }, [isPrivileged, isReadOnly]);
 
   // docs/02-brd.md BR-07: le technicien assigné (ou superviseur/admin) peut
   // corriger manuellement une catégorisation/priorité erronée.
@@ -241,7 +244,9 @@ export default function TicketDetailPage() {
     }
   }, [ticket]);
 
-  const isTechnician = user?.role === "TECHNICIAN";
+  // Automatisation et Assistant Technicien sont des écritures : masqués pour
+  // un compte de démonstration, même technicien.
+  const isTechnician = user?.role === "TECHNICIAN" && !isReadOnly;
 
   // docs/06-cas-utilisation.md UC-014/UC-022, docs/11-documentation-api.md
   // §8: POST /automation/runs est réservé au rôle TECHNICIAN (pas restreint
@@ -607,6 +612,7 @@ export default function TicketDetailPage() {
 
   const canContribute = !!(
     user &&
+    !isReadOnly &&
     ticket &&
     (ticket.employee.id === user.id ||
       ticket.technician?.id === user.id ||
@@ -616,11 +622,12 @@ export default function TicketDetailPage() {
 
   const canChangeStatus = !!(
     user &&
+    !isReadOnly &&
     ticket &&
     (ticket.technician?.id === user.id || user.role === "SUPERVISOR" || user.role === "ADMIN")
   );
 
-  const canAssignTechnician = isPrivileged;
+  const canAssignTechnician = isPrivileged && !isReadOnly;
 
   const isOwner = !!(user && ticket && ticket.employee.id === user.id);
   const canRate = !!(ticket && ticket.status === "RESOLVED" && (isOwner || ticket.rating !== null));

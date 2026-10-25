@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
@@ -10,6 +10,7 @@ import { AdminModule } from './admin/admin.module';
 import { AttachmentsModule } from './attachments/attachments.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { AuthModule } from './auth/auth.module';
+import { ReadOnlyRedactionInterceptor } from './auth/interceptors/read-only-redaction.interceptor';
 import { AutomationModule } from './automation/automation.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { CommentsModule } from './comments/comments.module';
@@ -89,6 +90,10 @@ import { UsersModule } from './users/users.module';
     HealthModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_INTERCEPTOR, useClass: ReadOnlyRedactionInterceptor },
+  ],
 })
 export class AppModule {}

@@ -37,6 +37,7 @@ export default function AdminSlaPoliciesPage() {
   const [savingPriorityId, setSavingPriorityId] = useState<string | null>(null);
 
   const isPrivileged = user?.role === "SUPERVISOR" || user?.role === "ADMIN";
+  const isReadOnly = user?.isReadOnly === true;
 
   const loadPolicies = useCallback(
     (token: string) => {
@@ -169,6 +170,7 @@ export default function AdminSlaPoliciesPage() {
                                 min={1}
                                 step={1}
                                 className="w-24"
+                                disabled={isReadOnly}
                                 value={drafts[policy.priorityId] ?? ""}
                                 onChange={(event) =>
                                   setDrafts((prev) => ({
@@ -183,13 +185,15 @@ export default function AdminSlaPoliciesPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Button
-                              size="sm"
-                              disabled={!isDirty || savingPriorityId === policy.priorityId}
-                              onClick={() => handleSave(policy)}
-                            >
-                              {savingPriorityId === policy.priorityId ? "Enregistrement..." : "Enregistrer"}
-                            </Button>
+                            {isReadOnly ? null : (
+                              <Button
+                                size="sm"
+                                disabled={!isDirty || savingPriorityId === policy.priorityId}
+                                onClick={() => handleSave(policy)}
+                              >
+                                {savingPriorityId === policy.priorityId ? "Enregistrement..." : "Enregistrer"}
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       );

@@ -51,8 +51,14 @@ export class AuthService {
     id: string;
     email: string;
     role: string;
+    isReadOnly: boolean;
   }) {
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      isReadOnly: user.isReadOnly,
+    };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload),
@@ -83,6 +89,7 @@ export class AuthService {
         email: user.email,
         displayName: user.displayName,
         role: user.role,
+        isReadOnly: user.isReadOnly,
       },
     };
   }

@@ -7,6 +7,8 @@ export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  // Absent des tokens émis avant l'ajout de User.isReadOnly.
+  isReadOnly?: boolean;
 }
 
 @Injectable()
@@ -20,6 +22,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   validate(payload: JwtPayload) {
-    return { userId: payload.sub, email: payload.email, role: payload.role };
+    return {
+      userId: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      isReadOnly: payload.isReadOnly === true,
+    };
   }
 }
