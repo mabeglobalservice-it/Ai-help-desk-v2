@@ -120,6 +120,8 @@ export default function AdminConfigurationItemDetailPage() {
   const isViewer =
     user?.role === "TECHNICIAN" || user?.role === "SUPERVISOR" || user?.role === "ADMIN";
   const isPrivileged = user?.role === "SUPERVISOR" || user?.role === "ADMIN";
+  // Compte de démonstration : consultation seule, aucun contrôle d'édition.
+  const canEdit = isPrivileged && user?.isReadOnly !== true;
 
   const load = useCallback(
     (token: string) => {
@@ -411,7 +413,7 @@ export default function AdminConfigurationItemDetailPage() {
                     <p className="font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase">
                       Criticité
                     </p>
-                    {isPrivileged ? (
+                    {canEdit ? (
                       <Select
                         value={ci.criticality}
                         onValueChange={(value) => value && handleFieldChange("criticality", value as string)}
@@ -442,7 +444,7 @@ export default function AdminConfigurationItemDetailPage() {
                     <p className="font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase">
                       Statut
                     </p>
-                    {isPrivileged ? (
+                    {canEdit ? (
                       <Select
                         value={ci.status}
                         onValueChange={(value) => value && handleFieldChange("status", value as string)}
@@ -562,7 +564,7 @@ export default function AdminConfigurationItemDetailPage() {
                     <Badge variant={new Date(ci.warranty.endDate) >= new Date() ? "secondary" : "destructive"}>
                       {new Date(ci.warranty.endDate) >= new Date() ? "Sous garantie" : "Garantie expirée"}
                     </Badge>
-                    {isPrivileged ? (
+                    {canEdit ? (
                       <div className="flex gap-2 pt-2">
                         <Button variant="outline" size="sm" onClick={startEditingWarranty}>
                           Modifier
@@ -581,7 +583,7 @@ export default function AdminConfigurationItemDetailPage() {
                 ) : (
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">Aucune garantie enregistrée.</p>
-                    {isPrivileged ? (
+                    {canEdit ? (
                       <Button variant="outline" size="sm" onClick={startEditingWarranty}>
                         Ajouter une garantie
                       </Button>
@@ -688,7 +690,7 @@ export default function AdminConfigurationItemDetailPage() {
                         </Badge>
                       );
                     })()}
-                    {isPrivileged ? (
+                    {canEdit ? (
                       <div className="flex gap-2 pt-2">
                         <Button variant="outline" size="sm" onClick={startEditingLicense}>
                           Modifier
@@ -707,7 +709,7 @@ export default function AdminConfigurationItemDetailPage() {
                 ) : (
                   <div className="space-y-2">
                     <EmptyState icon={KeyRound} message="Aucune licence enregistrée." className="items-start py-3 text-left" />
-                    {isPrivileged ? (
+                    {canEdit ? (
                       <Button variant="outline" size="sm" onClick={startEditingLicense}>
                         Ajouter une licence
                       </Button>
@@ -776,7 +778,7 @@ export default function AdminConfigurationItemDetailPage() {
                               {rel.child.name}
                             </Link>
                           </span>
-                          {isPrivileged ? (
+                          {canEdit ? (
                             <Button
                               variant="ghost"
                               size="xs"
@@ -791,7 +793,7 @@ export default function AdminConfigurationItemDetailPage() {
                   )}
                 </div>
 
-                {isPrivileged ? (
+                {canEdit ? (
                   <div className="flex flex-wrap items-end gap-2 border-t border-border pt-4">
                     <div className="space-y-1.5">
                       <p className="text-xs text-muted-foreground">Équipement dépendant</p>

@@ -137,23 +137,25 @@ export default function KnowledgeArticlesPage() {
                         : "Source : résolution automatique (UC-015, sans ticket)"}
                     </p>
                     <p className="mt-2 text-sm whitespace-pre-wrap">{article.content}</p>
-                    <div className="mt-3 flex gap-2">
-                      <Button
-                        className="flex-1"
-                        disabled={isSubmitting}
-                        onClick={() => handleDecide(article.id, "APPROVED")}
-                      >
-                        Approuver
-                      </Button>
-                      <Button
-                        className="flex-1"
-                        variant="outline"
-                        disabled={isSubmitting}
-                        onClick={() => handleDecide(article.id, "REJECTED")}
-                      >
-                        Rejeter
-                      </Button>
-                    </div>
+                    {user?.isReadOnly ? null : (
+                      <div className="mt-3 flex gap-2">
+                        <Button
+                          className="flex-1"
+                          disabled={isSubmitting}
+                          onClick={() => handleDecide(article.id, "APPROVED")}
+                        >
+                          Approuver
+                        </Button>
+                        <Button
+                          className="flex-1"
+                          variant="outline"
+                          disabled={isSubmitting}
+                          onClick={() => handleDecide(article.id, "REJECTED")}
+                        >
+                          Rejeter
+                        </Button>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -58,6 +58,7 @@ export default function AdminTeamsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isPrivileged = user?.role === "SUPERVISOR" || user?.role === "ADMIN";
+  const isReadOnly = user?.isReadOnly === true;
 
   const loadTeams = useCallback(
     (token: string) => {
@@ -160,62 +161,64 @@ export default function AdminTeamsPage() {
 
       <main className="mx-auto max-w-5xl px-6 py-8">
         <div className="flex flex-col gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-xl">Créer une équipe</CardTitle>
-              <CardDescription>
-                Associer une catégorie permet de suggérer automatiquement un technicien de cette
-                équipe lors de la création d&apos;un ticket dans cette catégorie.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {createError ? (
-                <Alert variant="destructive" className="mb-4">
-                  <AlertDescription>{createError}</AlertDescription>
-                </Alert>
-              ) : null}
-              <form className="grid grid-cols-1 gap-4 sm:grid-cols-2" onSubmit={handleCreate} noValidate>
-                <div className="space-y-2">
-                  <Label htmlFor="new-team-name">Nom</Label>
-                  <Input
-                    id="new-team-name"
-                    required
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Ex. Réseau & Infrastructure"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-team-category">Catégorie associée</Label>
-                  <Select value={categoryId} onValueChange={(value) => setCategoryId(value ?? NO_CATEGORY)}>
-                    <SelectTrigger id="new-team-category" className="w-full">
-                      <SelectValue placeholder="Aucune catégorie">
-                        {(value: string | null) =>
-                          value && value !== NO_CATEGORY
-                            ? (categories.find((category) => category.id === value)?.name ??
-                              "Aucune catégorie")
-                            : "Aucune catégorie"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_CATEGORY}>Aucune catégorie</SelectItem>
-                      {categories.map((category) => (
-                        <SelectItem key={category.id} value={category.id}>
-                          {category.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="sm:col-span-2">
-                  <Button type="submit" disabled={isSubmitting || !name.trim()}>
-                    {isSubmitting ? "Création..." : "Créer l'équipe"}
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
+          {isReadOnly ? null : (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-xl">Créer une équipe</CardTitle>
+                <CardDescription>
+                  Associer une catégorie permet de suggérer automatiquement un technicien de cette
+                  équipe lors de la création d&apos;un ticket dans cette catégorie.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {createError ? (
+                  <Alert variant="destructive" className="mb-4">
+                    <AlertDescription>{createError}</AlertDescription>
+                  </Alert>
+                ) : null}
+                <form className="grid grid-cols-1 gap-4 sm:grid-cols-2" onSubmit={handleCreate} noValidate>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-team-name">Nom</Label>
+                    <Input
+                      id="new-team-name"
+                      required
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="Ex. Réseau & Infrastructure"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-team-category">Catégorie associée</Label>
+                    <Select value={categoryId} onValueChange={(value) => setCategoryId(value ?? NO_CATEGORY)}>
+                      <SelectTrigger id="new-team-category" className="w-full">
+                        <SelectValue placeholder="Aucune catégorie">
+                          {(value: string | null) =>
+                            value && value !== NO_CATEGORY
+                              ? (categories.find((category) => category.id === value)?.name ??
+                                "Aucune catégorie")
+                              : "Aucune catégorie"
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_CATEGORY}>Aucune catégorie</SelectItem>
+                        {categories.map((category) => (
+                          <SelectItem key={category.id} value={category.id}>
+                            {category.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Button type="submit" disabled={isSubmitting || !name.trim()}>
+                      {isSubmitting ? "Création..." : "Créer l'équipe"}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
@@ -253,6 +256,7 @@ export default function AdminTeamsPage() {
                           <TableCell>
                             <Select
                               value={team.categoryId ?? NO_CATEGORY}
+                              disabled={isReadOnly}
                               onValueChange={(value) => value && handleCategoryChange(team, value)}
                             >
                               <SelectTrigger className="w-48">

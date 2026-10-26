@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { DenyReadOnly } from '../auth/decorators/read-only.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -23,6 +24,7 @@ import { UpdateIntegrationDto } from './dto/update-integration.dto';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.ADMIN)
+@DenyReadOnly()
 @Controller('admin')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}

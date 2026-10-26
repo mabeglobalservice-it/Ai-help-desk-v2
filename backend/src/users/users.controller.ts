@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { DenyReadOnly } from '../auth/decorators/read-only.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -22,6 +23,7 @@ import { UpdateSpecialtiesDto } from './dto/update-specialties.dto';
 @ApiTags('users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@DenyReadOnly()
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}

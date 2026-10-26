@@ -98,7 +98,8 @@ export default function KnowledgePage() {
   const [isUploading, setIsUploading] = useState(false);
 
   const isAllowed = user?.role ? KNOWLEDGE_ROLES.has(user.role) : undefined;
-  const canUpload = user?.role ? UPLOAD_ROLES.has(user.role) : false;
+  const isReadOnly = user?.isReadOnly === true;
+  const canUpload = user?.role && !isReadOnly ? UPLOAD_ROLES.has(user.role) : false;
   const isAdmin = user?.role === "ADMIN";
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
@@ -274,6 +275,7 @@ export default function KnowledgePage() {
                 ) : null}
                 {results.map((result) => {
                   const canDelete =
+                    !isReadOnly &&
                     result.sourceType === "DOCUMENT" && (isAdmin || result.knowledgeLevel === 5);
                   return (
                     <Card key={`${result.sourceType}-${result.id}`}>

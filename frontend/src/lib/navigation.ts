@@ -10,6 +10,8 @@ import {
   Settings2,
   ShieldCheck,
   Bot,
+  MessageSquareText,
+  Ticket,
   UserCog,
   UsersRound,
   type LucideIcon,
@@ -22,12 +24,17 @@ const KNOWLEDGE_ROLES = new Set(["EMPLOYEE", "TECHNICIAN", "SUPERVISOR", "ADMIN"
 const APPROVAL_ROLES = new Set(["TECHNICIAN", "SUPERVISOR", "ADMIN"]);
 const ARTICLE_REVIEW_ROLES = new Set(["SUPERVISOR", "ADMIN"]);
 const ADMIN_ROLES = new Set(["ADMIN"]);
+const ALL_ROLES = new Set(["EMPLOYEE", "TECHNICIAN", "SUPERVISOR", "ADMIN"]);
 
 export interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
   roles: Set<string>;
+  // Compte de démonstration (SessionUser.isReadOnly) : "hide" retire une page
+  // faite uniquement d'actions refusées par le backend, "only" ajoute un
+  // raccourci propre à la démonstration.
+  readOnly?: "hide" | "only";
 }
 
 export interface NavGroup {
@@ -43,7 +50,9 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard, roles: DASHBOARD_ROLES },
       { href: "/admin/sla-policies", label: "SLA", icon: ShieldCheck, roles: DASHBOARD_ROLES },
-      { href: "/automation/approvals", label: "Approbations", icon: CircleCheckBig, roles: APPROVAL_ROLES },
+      { href: "/tickets", label: "Tickets", icon: Ticket, roles: ALL_ROLES, readOnly: "only" },
+      { href: "/tickets/new", label: "Diagnostic IA", icon: MessageSquareText, roles: ALL_ROLES, readOnly: "only" },
+      { href: "/automation/approvals", label: "Approbations", icon: CircleCheckBig, roles: APPROVAL_ROLES, readOnly: "hide" },
     ],
   },
   {
@@ -57,7 +66,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Connaissances",
     items: [
       { href: "/knowledge", label: "Base de connaissances", icon: BookOpen, roles: KNOWLEDGE_ROLES },
-      { href: "/knowledge/articles", label: "Articles proposés", icon: FileCheck2, roles: ARTICLE_REVIEW_ROLES },
+      { href: "/knowledge/articles", label: "Articles proposés", icon: FileCheck2, roles: ARTICLE_REVIEW_ROLES, readOnly: "hide" },
     ],
   },
   {
@@ -78,11 +87,14 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-export function visibleNavGroups(role: string | undefined): NavGroup[] {
+export function visibleNavGroups(role: string | undefined, isReadOnly = false): NavGroup[] {
   if (!role) return [];
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => item.roles.has(role)),
+    items: group.items.filter(
+      (item) =>
+        item.roles.has(role) && (isReadOnly ? item.readOnly !== "hide" : item.readOnly !== "only"),
+    ),
   })).filter((group) => group.items.length > 0);
 }
 

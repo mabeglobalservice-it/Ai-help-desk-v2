@@ -44,6 +44,10 @@ const NO_CI = "NONE";
 export default function NewTicketPage() {
   const router = useRouter();
   const user = useSessionUser();
+  // Compte de démonstration : seul l'Assistant Help Desk est proposé (le
+  // backend l'autorise), sans création de ticket ni résolution automatique.
+  const isReadOnly = user?.isReadOnly === true;
+  const pageTitle = isReadOnly ? "Diagnostic IA" : "Nouveau ticket";
 
   const [categories, setCategories] = useState<TicketCategory[] | null>(null);
   const [priorities, setPriorities] = useState<Priority[] | null>(null);
@@ -347,10 +351,10 @@ export default function NewTicketPage() {
     </Button>
   );
 
-  if (user && user.role !== "EMPLOYEE") {
+  if (user && user.role !== "EMPLOYEE" && !isReadOnly) {
     return (
       <div className="min-h-screen bg-background">
-        <AppHeader title="Nouveau ticket" action={backLink} />
+        <AppHeader title={pageTitle} action={backLink} />
         <main className="mx-auto max-w-lg px-6 py-16">
           <Alert>
             <AlertDescription>
@@ -368,7 +372,7 @@ export default function NewTicketPage() {
   if (chatResolved) {
     return (
       <div className="min-h-screen bg-background">
-        <AppHeader title="Nouveau ticket" action={backLink} />
+        <AppHeader title={pageTitle} action={backLink} />
         <main className="mx-auto max-w-lg px-6 py-16">
           <Alert>
             <AlertDescription>
@@ -386,7 +390,7 @@ export default function NewTicketPage() {
   if (autoResolveOutcome?.status === "RESOLVED") {
     return (
       <div className="min-h-screen bg-background">
-        <AppHeader title="Nouveau ticket" action={backLink} />
+        <AppHeader title={pageTitle} action={backLink} />
         <main className="mx-auto max-w-lg px-6 py-16">
           <Alert>
             <AlertDescription>
@@ -404,7 +408,7 @@ export default function NewTicketPage() {
   if (autoResolveOutcome?.status === "FAILED_FALLBACK") {
     return (
       <div className="min-h-screen bg-background">
-        <AppHeader title="Nouveau ticket" action={backLink} />
+        <AppHeader title={pageTitle} action={backLink} />
         <main className="mx-auto max-w-lg px-6 py-16">
           <Alert variant="destructive">
             <AlertDescription>
@@ -426,7 +430,7 @@ export default function NewTicketPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <AppHeader title="Nouveau ticket" action={backLink} />
+      <AppHeader title={pageTitle} action={backLink} />
 
       <main className="mx-auto max-w-lg px-6 py-8">
         <Card className="mb-6">
@@ -495,14 +499,16 @@ export default function NewTicketPage() {
                   <Button className="flex-1" disabled={isChatResolving} onClick={handleChatResolved}>
                     {isChatResolving ? "..." : "Ça a résolu mon problème"}
                   </Button>
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    disabled={isChatResolving}
-                    onClick={handleChatPersists}
-                  >
-                    Le problème persiste, créer un ticket
-                  </Button>
+                  {isReadOnly ? null : (
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      disabled={isChatResolving}
+                      onClick={handleChatPersists}
+                    >
+                      Le problème persiste, créer un ticket
+                    </Button>
+                  )}
                 </div>
               </div>
             ) : linkedConversationId ? (
@@ -574,153 +580,155 @@ export default function NewTicketPage() {
           </Card>
         ) : null}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Décrire le problème</CardTitle>
-            <CardDescription>
-              Un technicien prendra en charge votre ticket selon sa priorité.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loadError ? (
-              <Alert variant="destructive">
-                <AlertDescription>{loadError}</AlertDescription>
-              </Alert>
-            ) : categories === null || priorities === null ? (
-              <p className="text-sm text-muted-foreground">Chargement du formulaire...</p>
-            ) : (
-              <form className="space-y-4" onSubmit={handleSubmit} noValidate>
-                <div className="space-y-2">
-                  <Label htmlFor="title">Titre</Label>
-                  <Input
-                    id="title"
-                    required
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    placeholder="Ex. L'écran ne s'allume plus"
-                  />
-                </div>
+        {isReadOnly ? null : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl">Décrire le problème</CardTitle>
+              <CardDescription>
+                Un technicien prendra en charge votre ticket selon sa priorité.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{loadError}</AlertDescription>
+                </Alert>
+              ) : categories === null || priorities === null ? (
+                <p className="text-sm text-muted-foreground">Chargement du formulaire...</p>
+              ) : (
+                <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+                  <div className="space-y-2">
+                    <Label htmlFor="title">Titre</Label>
+                    <Input
+                      id="title"
+                      required
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      placeholder="Ex. L'écran ne s'allume plus"
+                    />
+                  </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="summary">Description</Label>
-                  <Textarea
-                    id="summary"
-                    value={summary}
-                    onChange={(event) => setSummary(event.target.value)}
-                    placeholder="Décrivez le problème, ce que vous avez déjà essayé..."
-                    rows={4}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAnalyze}
-                    disabled={isAnalyzing || summary.trim().length < 10}
-                  >
-                    {isAnalyzing ? "Analyse en cours..." : "Analyser avec l'IA"}
-                  </Button>
-                  <p className="text-xs text-muted-foreground">
-                    Suggère automatiquement un titre, une catégorie et une priorité à partir de votre
-                    description. Vous pourrez toujours les modifier avant d&apos;envoyer.
-                  </p>
-                  {aiError ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="summary">Description</Label>
+                    <Textarea
+                      id="summary"
+                      value={summary}
+                      onChange={(event) => setSummary(event.target.value)}
+                      placeholder="Décrivez le problème, ce que vous avez déjà essayé..."
+                      rows={4}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAnalyze}
+                      disabled={isAnalyzing || summary.trim().length < 10}
+                    >
+                      {isAnalyzing ? "Analyse en cours..." : "Analyser avec l'IA"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Suggère automatiquement un titre, une catégorie et une priorité à partir de votre
+                      description. Vous pourrez toujours les modifier avant d&apos;envoyer.
+                    </p>
+                    {aiError ? (
+                      <Alert variant="destructive">
+                        <AlertDescription>{aiError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {aiDegraded ? (
+                      <Alert>
+                        <AlertDescription>
+                          L&apos;IA n&apos;est pas disponible pour le moment : suggestion générée en mode
+                          dégradé à partir de mots-clés. Vérifiez les valeurs avant d&apos;envoyer.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="category">Catégorie</Label>
+                    <Select value={categoryId} onValueChange={(value) => setCategoryId(value as string)}>
+                      <SelectTrigger id="category" className="w-full">
+                        <SelectValue placeholder="Choisir une catégorie">
+                          {(value: string | null) =>
+                            categories.find((category) => category.id === value)?.name ??
+                            "Choisir une catégorie"
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categories.map((category) => (
+                          <SelectItem key={category.id} value={category.id}>
+                            {category.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="priority">Priorité</Label>
+                    <Select value={priorityId} onValueChange={(value) => setPriorityId(value as string)}>
+                      <SelectTrigger id="priority" className="w-full">
+                        <SelectValue placeholder="Choisir une priorité">
+                          {(value: string | null) =>
+                            priorities.find((priority) => priority.id === value)?.name ??
+                            "Choisir une priorité"
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {priorities.map((priority) => (
+                          <SelectItem key={priority.id} value={priority.id}>
+                            {priority.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="ci">Équipement concerné (optionnel)</Label>
+                    <Select value={ciId} onValueChange={(value) => setCiId((value as string) ?? NO_CI)}>
+                      <SelectTrigger id="ci" className="w-full">
+                        <SelectValue placeholder="Aucun équipement">
+                          {(value: string | null) =>
+                            value && value !== NO_CI
+                              ? (configurationItems.find((ci) => ci.id === value)?.name ??
+                                "Aucun équipement")
+                              : "Aucun équipement"
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_CI}>Aucun équipement</SelectItem>
+                        {configurationItems.map((ci) => (
+                          <SelectItem key={ci.id} value={ci.id}>
+                            {ci.name} ({ci.inventoryNumber})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {submitError ? (
                     <Alert variant="destructive">
-                      <AlertDescription>{aiError}</AlertDescription>
+                      <AlertDescription>{submitError}</AlertDescription>
                     </Alert>
                   ) : null}
-                  {aiDegraded ? (
-                    <Alert>
-                      <AlertDescription>
-                        L&apos;IA n&apos;est pas disponible pour le moment : suggestion générée en mode
-                        dégradé à partir de mots-clés. Vérifiez les valeurs avant d&apos;envoyer.
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-                </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="category">Catégorie</Label>
-                  <Select value={categoryId} onValueChange={(value) => setCategoryId(value as string)}>
-                    <SelectTrigger id="category" className="w-full">
-                      <SelectValue placeholder="Choisir une catégorie">
-                        {(value: string | null) =>
-                          categories.find((category) => category.id === value)?.name ??
-                          "Choisir une catégorie"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories.map((category) => (
-                        <SelectItem key={category.id} value={category.id}>
-                          {category.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="priority">Priorité</Label>
-                  <Select value={priorityId} onValueChange={(value) => setPriorityId(value as string)}>
-                    <SelectTrigger id="priority" className="w-full">
-                      <SelectValue placeholder="Choisir une priorité">
-                        {(value: string | null) =>
-                          priorities.find((priority) => priority.id === value)?.name ??
-                          "Choisir une priorité"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {priorities.map((priority) => (
-                        <SelectItem key={priority.id} value={priority.id}>
-                          {priority.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="ci">Équipement concerné (optionnel)</Label>
-                  <Select value={ciId} onValueChange={(value) => setCiId((value as string) ?? NO_CI)}>
-                    <SelectTrigger id="ci" className="w-full">
-                      <SelectValue placeholder="Aucun équipement">
-                        {(value: string | null) =>
-                          value && value !== NO_CI
-                            ? (configurationItems.find((ci) => ci.id === value)?.name ??
-                              "Aucun équipement")
-                            : "Aucun équipement"
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_CI}>Aucun équipement</SelectItem>
-                      {configurationItems.map((ci) => (
-                        <SelectItem key={ci.id} value={ci.id}>
-                          {ci.name} ({ci.inventoryNumber})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {submitError ? (
-                  <Alert variant="destructive">
-                    <AlertDescription>{submitError}</AlertDescription>
-                  </Alert>
-                ) : null}
-
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={isSubmitting || !categoryId || !priorityId}
-                >
-                  {isSubmitting ? "Création..." : "Créer le ticket"}
-                </Button>
-              </form>
-            )}
-          </CardContent>
-        </Card>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isSubmitting || !categoryId || !priorityId}
+                  >
+                    {isSubmitting ? "Création..." : "Créer le ticket"}
+                  </Button>
+                </form>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </main>
     </div>
   );

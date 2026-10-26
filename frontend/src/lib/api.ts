@@ -109,6 +109,10 @@ export interface SessionUser {
   email: string;
   displayName: string;
   role: Role;
+  // Compte de démonstration : écritures refusées par le backend (voir
+  // backend/src/auth/guards/read-only.guard.ts), actions masquées ici.
+  // Absent d'une session enregistrée avant l'ajout du champ.
+  isReadOnly?: boolean;
 }
 
 export interface LoginResponse {

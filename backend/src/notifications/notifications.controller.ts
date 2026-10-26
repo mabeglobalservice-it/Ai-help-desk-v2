@@ -3,6 +3,10 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import {
+  AllowReadOnly,
+  DenyReadOnly,
+} from '../auth/decorators/read-only.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../../generated/prisma/client';
 import { NotificationsService } from './notifications.service';
@@ -31,12 +35,14 @@ export class NotificationsController {
     description: 'Réservé au rôle ADMIN',
   })
   @Roles(Role.ADMIN)
+  @DenyReadOnly()
   @Get('templates')
   getTemplates() {
     return this.notificationsService.getTemplates();
   }
 
   @ApiOperation({ summary: 'Marquer une notification comme lue' })
+  @AllowReadOnly()
   @Patch(':id/read')
   markAsRead(@Param('id') id: string, @Req() req: Request) {
     const requester = req.user as { userId: string };

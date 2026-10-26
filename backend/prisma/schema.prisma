@@ -29,6 +29,10 @@ model User {
   // actions sensibles du module Automation — distinct du role SUPERVISOR,
   // qui a toujours ce droit.
   canApproveAutomations Boolean     @default(false) @map("can_approve_automations")
+  // Compte de démonstration (recruteurs) : toute écriture est refusée sauf
+  // une liste autorisée, certaines lectures sensibles aussi, et les emails
+  // des autres utilisateurs sont masqués — voir auth/guards/read-only.guard.ts.
+  isReadOnly            Boolean     @default(false) @map("is_read_only")
   createdAt             DateTime    @default(now()) @map("created_at")
 
   ticketsAsEmployee         Ticket[]              @relation("EmployeeTickets")
